@@ -16,6 +16,24 @@ MAN_PAGES = {
     "systemd.service(5)": "systemd.service",
 }
 
+# The citations are written against the minimum Podman this project supports
+# (ADR-0002). Checking them against an older manual page compares the rules
+# with documentation they were never quoting: Ubuntu ships 4.9, whose wording
+# differs from 5.x in several of the passages cited here.
+MINIMUM_PODMAN = (5, 0)
+
+
+def podman_version():
+    """Return the installed Podman version as (major, minor), or None."""
+    try:
+        out = subprocess.run(
+            ["podman", "--version"], capture_output=True, text=True, timeout=10,
+        ).stdout
+    except Exception:
+        return None
+    m = re.search(r"(\d+)\.(\d+)", out)
+    return (int(m.group(1)), int(m.group(2))) if m else None
+
 
 def load(page):
     try:
@@ -33,6 +51,18 @@ def load(page):
     out = re.sub(r"[\u2010-]\s*\n\s*", "", out)
     return re.sub(r"\s+", " ", out)
 
+
+version = podman_version()
+if version is None:
+    print("podman not installed; cannot verify citations against its manual pages")
+    sys.exit(0)
+if version < MINIMUM_PODMAN:
+    print(
+        f"podman {version[0]}.{version[1]} is older than the supported minimum "
+        f"{MINIMUM_PODMAN[0]}.{MINIMUM_PODMAN[1]} (ADR-0002); its manual pages "
+        "predate the wording the rules cite, so verification is skipped"
+    )
+    sys.exit(0)
 
 pages = {name: load(binary) for name, binary in MAN_PAGES.items()}
 

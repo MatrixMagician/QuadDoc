@@ -35,9 +35,14 @@ jobs:
         run: go test -race ./...
 
       # The Quadlet generator is the acceptance oracle for conversion and for
-      # the fix engine. The tests skip when it is absent or older than the
-      # supported minimum, so this job installs podman to make sure they
-      # actually run somewhere rather than skipping everywhere.
+      # the fix engine.
+      #
+      # ubuntu-latest packages Podman 4.9, which is below the minimum this
+      # project supports (ADR-0002) and lacks keys such as Pod=. The generator
+      # and citation checks detect that and skip with a reason rather than
+      # reporting the runner's age as a failure. Installing podman here still
+      # earns its keep: it proves the skip path works and that nothing else
+      # breaks when podman is present.
       - name: Install podman
         run: |
           sudo apt-get update
