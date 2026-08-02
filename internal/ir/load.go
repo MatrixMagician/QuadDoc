@@ -87,6 +87,7 @@ func FromParsed(f *quadlet.File) *Unit {
 	}
 
 	for _, e := range f.Section(section) {
+		u.SetKeyLine(e.Key, e.Line)
 		switch strings.ToLower(e.Key) {
 		case "image":
 			u.Image = e.Value

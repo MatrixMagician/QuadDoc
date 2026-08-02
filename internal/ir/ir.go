@@ -169,6 +169,27 @@ type Unit struct {
 	// Source is the parsed file, retained so fixes can rewrite it and rules
 	// can reach keys the IR does not model. Nil for generated units.
 	Source SourceFile
+
+	// keyLines records where each scalar key was declared, so findings about
+	// a key can cite a line. Repeated keys carry their own line on the value.
+	keyLines map[string]int
+}
+
+// KeyLine returns the line a scalar key was declared on, or 0 if the unit did
+// not set it. Findings are more useful pointing at a line than at a whole file.
+func (u *Unit) KeyLine(key string) int {
+	if u.keyLines == nil {
+		return 0
+	}
+	return u.keyLines[strings.ToLower(key)]
+}
+
+// SetKeyLine records where a key was declared. Used by loaders.
+func (u *Unit) SetKeyLine(key string, line int) {
+	if u.keyLines == nil {
+		u.keyLines = make(map[string]int)
+	}
+	u.keyLines[strings.ToLower(key)] = line
 }
 
 // SourceFile is the parsed-file behaviour the IR needs, kept as an interface so
