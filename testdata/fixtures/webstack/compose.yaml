@@ -1,0 +1,59 @@
+# A realistic small stack: a web front end, a database it depends on, a cache,
+# named volumes, a custom network, healthchecks, and a bind mount. Every one of
+# these exercises a translation decision QuadDoc has to get right.
+services:
+  web:
+    image: docker.io/library/nginx:1.27
+    ports:
+      - "8080:80"
+      - "8443:443"
+    volumes:
+      - ./site:/usr/share/nginx/html:ro
+      - ./certs:/etc/nginx/certs
+    environment:
+      NGINX_HOST: example.invalid
+      API_TOKEN: sk_live_not_a_real_token
+    depends_on:
+      db:
+        condition: service_healthy
+      cache:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - backend
+
+  db:
+    image: docker.io/library/postgres:16
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./certs:/etc/postgresql/certs:ro
+    environment:
+      POSTGRES_PASSWORD: hunter2
+      POSTGRES_DB: app
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+    restart: always
+    networks:
+      - backend
+
+  cache:
+    image: docker.io/library/redis:7
+    user: "999:999"
+    volumes:
+      - cachedata:/data
+    command: ["redis-server", "--save", "60", "1"]
+    restart: always
+    networks:
+      - backend
+
+volumes:
+  pgdata:
+  cachedata:
+
+networks:
+  backend:
+    driver: bridge
