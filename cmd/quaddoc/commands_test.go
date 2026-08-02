@@ -310,6 +310,16 @@ func TestCaptureContextAndReplay(t *testing.T) {
 func TestHostContextChangesConfidence(t *testing.T) {
 	// Without host context a finding is a possibility; with it, a fact. The
 	// wording must differ, or the tool asserts things it has not checked.
+	//
+	// The SELinux rules are the clearest demonstration, but they are also the
+	// ones ADR-0004 suppresses entirely when SELinux is absent from the
+	// kernel. On a host without it, QD001 correctly reports nothing, so this
+	// test would fail for the very behaviour it is meant to protect. Skip
+	// there rather than weaken the assertion.
+	if !selinuxPresent() {
+		t.Skip("SELinux is absent, so the SELinux rules are suppressed (ADR-0004)")
+	}
+
 	bin := buildCLI(t)
 	units := writeUnits(t, map[string]string{
 		"web.container": "[Container]\nImage=docker.io/library/nginx:1.27\n" +
@@ -325,6 +335,41 @@ func TestHostContextChangesConfidence(t *testing.T) {
 	if !strings.Contains(with, `"confidence": "confirmed"`) {
 		t.Errorf("with host context, findings should be confirmed:\n%s", with)
 	}
+}
+
+// TestHostContextSuppressesSELinuxRulesWhenAbsent is the other half of the
+// behaviour above, and runs on hosts where SELinux is not present. Together the
+// two cover both sides of the ADR-0004 ladder wherever the tests happen to run.
+func TestHostContextSuppressesSELinuxRulesWhenAbsent(t *testing.T) {
+	if selinuxPresent() {
+		t.Skip("SELinux is present, so the rules are not suppressed here")
+	}
+
+	bin := buildCLI(t)
+	units := writeUnits(t, map[string]string{
+		"web.container": "[Container]\nImage=docker.io/library/nginx:1.27\n" +
+			"Volume=/srv/site:/data\n[Install]\nWantedBy=default.target\n",
+	})
+
+	// Without host context the rule reports a possibility, since it cannot
+	// know whether the target enforces SELinux.
+	without, _, _ := run(t, bin, "lint", "--json", units)
+	if !strings.Contains(without, "QD001") {
+		t.Errorf("without host context, QD001 should still be reported:\n%s", without)
+	}
+
+	// With host context confirming SELinux is absent, it is suppressed.
+	with, _, _ := run(t, bin, "lint", "--host-context=live", "--json", units)
+	if strings.Contains(with, "QD001") {
+		t.Errorf("with SELinux absent, QD001 should be suppressed (ADR-0004):\n%s", with)
+	}
+}
+
+// selinuxPresent reports whether this kernel has SELinux, which is what
+// ADR-0004's suppression turns on.
+func selinuxPresent() bool {
+	_, err := os.Stat("/sys/fs/selinux/enforce")
+	return err == nil
 }
 
 func TestLintRejectsABadHostContextPath(t *testing.T) {
@@ -497,10 +542,7 @@ func TestRulesMarkdownIsGenerated(t *testing.T) {
 // against Podman's own generator, which is the only authority on whether a
 // unit is valid.
 func TestConvertedThenFixedUnitsPassTheRealGenerator(t *testing.T) {
-	generator := findGenerator()
-	if generator == "" {
-		t.Skip("Quadlet generator not installed")
-	}
+	generator := quadletGenerator(t)
 
 	bin := buildCLI(t)
 	dir, compose := writeCompose(t, fixtureCompose)
@@ -525,17 +567,4 @@ func assertGeneratorAccepts(t *testing.T, generator, dir string) {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("the generator rejected the units in %s: %v\n%s", dir, err, out)
 	}
-}
-
-func findGenerator() string {
-	for _, path := range []string{
-		"/usr/libexec/podman/quadlet",
-		"/usr/lib/podman/quadlet",
-		"/usr/local/libexec/podman/quadlet",
-	} {
-		if info, err := os.Stat(path); err == nil && !info.IsDir() {
-			return path
-		}
-	}
-	return ""
 }

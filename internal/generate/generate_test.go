@@ -52,10 +52,7 @@ func TestConvertEmitsAUnitPerService(t *testing.T) {
 // exist; the real entry point is the generator binary with QUADLET_UNIT_DIRS.
 // See docs/spec-review.md finding F2.
 func TestGeneratedUnitsPassTheRealGenerator(t *testing.T) {
-	generator := findQuadletGenerator()
-	if generator == "" {
-		t.Skip("Quadlet generator not installed; skipping the real-generator check")
-	}
+	generator := quadletGenerator(t)
 
 	dir := t.TempDir()
 	for name, content := range convertFixture(t, Options{Annotate: true}) {
@@ -84,20 +81,6 @@ func TestGeneratedUnitsPassTheRealGenerator(t *testing.T) {
 	if got := strings.Count(string(out), "---"); got < 6 {
 		t.Errorf("generator produced %d service blocks, want at least 6\n%s", got, out)
 	}
-}
-
-// findQuadletGenerator locates the generator binary, which is not on PATH.
-func findQuadletGenerator() string {
-	for _, path := range []string{
-		"/usr/libexec/podman/quadlet",
-		"/usr/lib/podman/quadlet",
-		"/usr/local/libexec/podman/quadlet",
-	} {
-		if info, err := os.Stat(path); err == nil && !info.IsDir() {
-			return path
-		}
-	}
-	return ""
 }
 
 func TestNamedVolumesReferenceTheVolumeUnit(t *testing.T) {
@@ -250,10 +233,7 @@ func TestPodModeEmitsAPod(t *testing.T) {
 }
 
 func TestPodModeAlsoPassesTheRealGenerator(t *testing.T) {
-	generator := findQuadletGenerator()
-	if generator == "" {
-		t.Skip("Quadlet generator not installed")
-	}
+	generator := quadletGenerator(t)
 
 	dir := t.TempDir()
 	for name, content := range convertFixture(t, Options{Annotate: true, Pod: true}) {

@@ -184,10 +184,7 @@ PodmanArgs=--label \
 // TestFixedUnitsStillPassTheGenerator is the check that matters most: a fix
 // that produced a file Podman rejects would be worse than no fix at all.
 func TestFixedUnitsStillPassTheGenerator(t *testing.T) {
-	generator := findQuadletGenerator()
-	if generator == "" {
-		t.Skip("Quadlet generator not installed")
-	}
+	generator := quadletGenerator(t)
 
 	dir, _ := writeUnits(t, map[string]string{
 		"a.container": "[Container]\nImage=docker.io/library/nginx:1.27\nVolume=/srv/s:/data\n",
@@ -381,19 +378,6 @@ func TestFileWithoutTrailingNewlineKeepsItsShape(t *testing.T) {
 	if strings.HasSuffix(string(after), "\n") {
 		t.Errorf("a file with no trailing newline gained one:\n%q", string(after))
 	}
-}
-
-func findQuadletGenerator() string {
-	for _, path := range []string{
-		"/usr/libexec/podman/quadlet",
-		"/usr/lib/podman/quadlet",
-		"/usr/local/libexec/podman/quadlet",
-	} {
-		if info, err := os.Stat(path); err == nil && !info.IsDir() {
-			return path
-		}
-	}
-	return ""
 }
 
 // TestFixQD001GuardsAgainstDoubleLabelling exercises the idempotence guard in
