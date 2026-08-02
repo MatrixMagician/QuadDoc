@@ -112,7 +112,7 @@ func checkQD042(c *Context) []Finding {
 
 			findings = append(findings, Finding{
 				RuleID:      "QD042",
-				Severity:    c.Severity("QD042", Warning),
+				Severity:    Warning,
 				Confidence:  Confirmed,
 				Unit:        u.Path,
 				Line:        e.Line,

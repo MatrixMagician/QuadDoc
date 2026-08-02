@@ -111,7 +111,7 @@ func runLint(args []string) int {
 	}
 
 	engine := &rules.Engine{Config: ruleConfig, Host: host}
-	findings := config.ApplySuppressions(engine.Run(project), suppressions(project))
+	findings := projectConfig.ApplySuppressions(engine.Run(project), suppressions(project))
 
 	switch {
 	case *asSARIF:

@@ -89,6 +89,21 @@ type Finding struct {
 	// applies exactly what the rule decided rather than re-deriving it from
 	// the prose. Empty for findings with no mechanical fix.
 	Fix map[string]string `json:"-"`
+
+	// hostDowngraded records that host context lowered this finding's
+	// severity, as opposed to the rule simply grading its own output. The
+	// distinction matters when configuration also has an opinion: a project
+	// may raise a rule it cares about, but it cannot raise a finding the host
+	// has established does not apply here. See ADR-0004.
+	hostDowngraded bool
+}
+
+// MarkHostDowngraded records that host context lowered this finding's
+// severity, so configuration does not raise it back. Used by the SELinux
+// rules, whose severity depends on whether the kernel enforces policy.
+func (f Finding) MarkHostDowngraded() Finding {
+	f.hostDowngraded = true
+	return f
 }
 
 // Rule is one check over a project.
@@ -213,7 +228,21 @@ func (e *Engine) Run(p *ir.Project) []Finding {
 		if e.Config.Disabled[r.ID] {
 			continue
 		}
-		findings = append(findings, r.Check(ctx)...)
+		for _, f := range r.Check(ctx) {
+			// Apply configuration here rather than trusting each rule to
+			// remember. A rule that built its Finding with a literal severity
+			// used to ignore .quaddoc.toml silently, which let a project raise
+			// a rule to `error` and still pass CI. Two rules had exactly that
+			// bug. Doing it centrally makes the mistake impossible rather than
+			// merely discouraged.
+			//
+			// A rule may still lower its own severity below its default, which
+			// is how the SELinux downgrade ladder works: a permissive host
+			// makes an error a note. That is a fact about the host rather than
+			// a preference, so it survives an override that would raise it.
+			f.Severity = e.effectiveSeverity(f, f.Severity)
+			findings = append(findings, f)
+		}
 	}
 
 	sort.SliceStable(findings, func(i, j int) bool {
@@ -232,8 +261,11 @@ func (e *Engine) Run(p *ir.Project) []Finding {
 	return findings
 }
 
-// resolveSeverity builds the function that decides a rule's effective
-// severity: configuration first, then the host-context downgrade ladder.
+// resolveSeverity builds the function a rule sees through Context.Severity.
+//
+// Rules no longer need to call it: Engine.Run applies the same configuration to
+// whatever they return. It remains so that a rule can ask what severity it is
+// about to be reported at, which QD022 uses to decide its wording.
 func (e *Engine) resolveSeverity(host hostctx.Context) func(string, Severity) Severity {
 	return func(ruleID string, def Severity) Severity {
 		if s, ok := e.Config.SeverityOverride[ruleID]; ok {
@@ -241,6 +273,26 @@ func (e *Engine) resolveSeverity(host hostctx.Context) func(string, Severity) Se
 		}
 		return def
 	}
+}
+
+// effectiveSeverity decides what severity a finding is reported at.
+//
+// Configuration wins, with one exception: a finding the host context has
+// downgraded is not raised back up, because the host established that the
+// problem does not apply here and that is an observation rather than a
+// preference. See ADR-0004.
+func (e *Engine) effectiveSeverity(f Finding, reported Severity) Severity {
+	override, configured := e.Config.SeverityOverride[f.RuleID]
+	if !configured {
+		return reported
+	}
+	if f.hostDowngraded && override > reported {
+		// The host established that this matters less here, which a project
+		// preference should not override upwards. Lowering it further is
+		// still allowed.
+		return reported
+	}
+	return override
 }
 
 // DowngradeForSELinux applies the ladder from ADR-0004 to a severity that

@@ -144,7 +144,7 @@ func checkQD030(c *Context) []Finding {
 
 		findings = append(findings, Finding{
 			RuleID:     "QD030",
-			Severity:   c.Severity("QD030", Error),
+			Severity:   Error,
 			Confidence: Confirmed,
 			Unit:       u.Path,
 			Line:       u.KeyLine("Network"),
@@ -202,7 +202,7 @@ func checkQD031(c *Context) []Finding {
 
 			findings = append(findings, Finding{
 				RuleID:     "QD031",
-				Severity:   c.Severity("QD031", Warning),
+				Severity:   Warning,
 				Confidence: confidence,
 				Unit:       u.Path,
 				Line:       p.Line,
@@ -245,7 +245,7 @@ func checkQD032(c *Context) []Finding {
 
 		findings = append(findings, Finding{
 			RuleID:     "QD032",
-			Severity:   c.Severity("QD032", Error),
+			Severity:   Error,
 			Confidence: Confirmed,
 			Unit:       u.Path,
 			Message: fmt.Sprintf("a unit called %s is already installed in the Quadlet search path, and would be replaced",
@@ -297,7 +297,7 @@ func checkQD020(c *Context) []Finding {
 
 			findings = append(findings, Finding{
 				RuleID:     "QD020",
-				Severity:   c.Severity("QD020", Warning),
+				Severity:   Warning,
 				Confidence: Confirmed,
 				Unit:       u.Path,
 				Line:       u.KeyLine("After"),
@@ -322,7 +322,7 @@ func checkQD021(c *Context) []Finding {
 
 		findings = append(findings, Finding{
 			RuleID:     "QD021",
-			Severity:   c.Severity("QD021", Error),
+			Severity:   Error,
 			Confidence: Confirmed,
 			Unit:       u.Path,
 			Line:       u.KeyLine("Restart"),

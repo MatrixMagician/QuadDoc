@@ -125,7 +125,7 @@ func checkQD010(c *Context) []Finding {
 
 			findings = append(findings, Finding{
 				RuleID:     "QD010",
-				Severity:   c.Severity("QD010", Warning),
+				Severity:   Warning,
 				Confidence: Possible,
 				Unit:       u.Path,
 				Line:       m.Line,
@@ -167,7 +167,7 @@ func checkQD011(c *Context) []Finding {
 
 			findings = append(findings, Finding{
 				RuleID:     "QD011",
-				Severity:   c.Severity("QD011", Error),
+				Severity:   Error,
 				Confidence: Possible,
 				Unit:       u.Path,
 				Line:       u.KeyLine("GroupAdd") + i,
@@ -218,7 +218,7 @@ func checkQD012(c *Context) []Finding {
 
 			findings = append(findings, Finding{
 				RuleID:     "QD012",
-				Severity:   c.Severity("QD012", Warning),
+				Severity:   Warning,
 				Confidence: Possible,
 				Unit:       u.Path,
 				Line:       m.Line,
@@ -341,7 +341,7 @@ func outsideRange(c *Context, u *ir.Unit, key string, id int, ranges []hostctx.I
 
 	return Finding{
 		RuleID:     "QD013",
-		Severity:   c.Severity("QD013", Error),
+		Severity:   Error,
 		Confidence: Confirmed,
 		Unit:       u.Path,
 		Line:       u.KeyLine(key),

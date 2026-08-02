@@ -133,20 +133,23 @@ var relabelUnsafeFilesystems = map[string]string{
 	"overlay":  "relabelling an overlay affects the underlying layers unpredictably",
 }
 
-// selinuxApplies reports whether an SELinux finding should be reported at all,
-// and at what severity, given the host context. See ADR-0004.
-func selinuxFinding(c *Context, ruleID string, def Severity) (Severity, Confidence, bool) {
+// selinuxFinding reports whether an SELinux finding should be raised at all,
+// at what severity, and whether the host lowered that severity. See ADR-0004.
+//
+// The downgraded flag matters because configuration must not raise a finding
+// back up after the host has established that it does not apply here.
+func selinuxFinding(c *Context, ruleID string, def Severity) (severity Severity, confidence Confidence, downgraded, report bool) {
 	mode := c.Host.SELinux()
-	severity, keep := DowngradeForSELinux(mode, c.Severity(ruleID, def))
+	severity, keep := DowngradeForSELinux(mode, def)
 	if !keep {
-		return severity, Confirmed, false
+		return severity, Confirmed, true, false
 	}
 
-	confidence := Possible
+	confidence = Possible
 	if mode != hostctx.SELinuxUnknown {
 		confidence = Confirmed
 	}
-	return severity, confidence, true
+	return severity, confidence, severity < def, true
 }
 
 // hedge words a finding as a possibility when no host context confirmed it.
@@ -173,7 +176,7 @@ func checkQD001(c *Context) []Finding {
 			// A read-only mount is still subject to the label check: SELinux
 			// denies the read, not merely the write.
 
-			severity, confidence, report := selinuxFinding(c, "QD001", Error)
+			severity, confidence, downgraded, report := selinuxFinding(c, "QD001", Error)
 			if !report {
 				continue
 			}
@@ -189,7 +192,7 @@ func checkQD001(c *Context) []Finding {
 					c.BindSourceUsage[m.Source])
 			}
 
-			findings = append(findings, Finding{
+			finding := Finding{
 				RuleID:     "QD001",
 				Severity:   severity,
 				Confidence: confidence,
@@ -207,7 +210,11 @@ func checkQD001(c *Context) []Finding {
 				// Handing it to the fix engine structurally is what stops the
 				// fix writing a :Z that QD002 would then flag.
 				Fix: map[string]string{"option": option},
-			})
+			}
+			if downgraded {
+				finding = finding.MarkHostDowngraded()
+			}
+			findings = append(findings, finding)
 		}
 	}
 	return findings
@@ -227,12 +234,12 @@ func checkQD002(c *Context) []Finding {
 				continue
 			}
 
-			severity, confidence, report := selinuxFinding(c, "QD002", Error)
+			severity, confidence, downgraded, report := selinuxFinding(c, "QD002", Error)
 			if !report {
 				continue
 			}
 
-			findings = append(findings, Finding{
+			finding := Finding{
 				RuleID:     "QD002",
 				Severity:   severity,
 				Confidence: confidence,
@@ -244,7 +251,11 @@ func checkQD002(c *Context) []Finding {
 					"There is no mechanical fix here: if these containers were meant to be "+
 					"isolated from each other, give them separate directories rather than "+
 					"weakening the label.", withOption(stripOption(m, "Z"), "z")),
-			})
+			}
+			if downgraded {
+				finding = finding.MarkHostDowngraded()
+			}
+			findings = append(findings, finding)
 		}
 	}
 	return findings
@@ -272,7 +283,7 @@ func checkQD003(c *Context) []Finding {
 			if strings.Contains(mount.Options, "context=") {
 				findings = append(findings, Finding{
 					RuleID:     "QD003",
-					Severity:   c.Severity("QD003", Warning),
+					Severity:   Warning,
 					Confidence: Confirmed,
 					Unit:       u.Path,
 					Line:       m.Line,
@@ -294,7 +305,7 @@ func checkQD003(c *Context) []Finding {
 
 			findings = append(findings, Finding{
 				RuleID:     "QD003",
-				Severity:   c.Severity("QD003", Warning),
+				Severity:   Warning,
 				Confidence: Confirmed,
 				Unit:       u.Path,
 				Line:       m.Line,
@@ -330,7 +341,7 @@ func checkQD004(c *Context) []Finding {
 			// may be enforcing tomorrow with its labels already rewritten.
 			findings = append(findings, Finding{
 				RuleID:     "QD004",
-				Severity:   c.Severity("QD004", Error),
+				Severity:   Error,
 				Confidence: Confirmed,
 				Unit:       u.Path,
 				Line:       m.Line,

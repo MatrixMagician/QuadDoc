@@ -326,3 +326,108 @@ func buildUnits(t *testing.T, texts []string) []*ir.Unit {
 	}
 	return units
 }
+
+// TestEveryRuleHonoursASeverityOverride is a property test over the whole
+// catalogue.
+//
+// A rule that builds a Finding with a literal severity silently ignores
+// .quaddoc.toml, so a project that raised a rule to `error` still passes CI.
+// The previous test covered only QD022, and two rules had exactly this bug:
+// QD040's short-name branch and QD000 both hardcoded their severity.
+//
+// Rather than trusting each rule to remember, the engine now applies the
+// override centrally. This test is what keeps that true.
+func TestEveryRuleHonoursASeverityOverride(t *testing.T) {
+	// A project shaped to trip as many rules as possible at once.
+	units := namedUnits(t, map[string]string{
+		"shared.network": "[Network]\n",
+		"data.volume":    "[Volume]\nType=none\nDevice=/srv/appdata\nOptions=bind\n",
+		"web.container": "[Container]\nImage=nginx:latest\nAutoUpdate=registry\n" +
+			"Volume=/srv/shared:/data\nVolume=data.volume:/vol\nUser=1000\n" +
+			"GroupAdd=video\nPublishPort=80:80\nEnvironment=API_TOKEN=sk_live_x\n" +
+			"Frobnicate=yes\n[Unit]\nAfter=db.service\n" +
+			"[Service]\nRestart=unless-stopped\n[Install]\nAlso=nope.service\n",
+		"db.container": "[Container]\nImage=postgres\nVolume=/srv/shared:/data:Z\n" +
+			"Volume=/home:/home:Z\nVolume=data.volume:/vol\n",
+	})
+
+	host := hostctx.Static{
+		SELinuxMode:    hostctx.SELinuxEnforcing,
+		Mounts:         []hostctx.Mount{{MountPoint: "/", FSType: "btrfs"}},
+		SubUID:         []hostctx.IDRange{{Start: 100000, Count: 65536}},
+		SubGID:         []hostctx.IDRange{{Start: 100000, Count: 65536}},
+		PortStart:      1024,
+		PortStartKnown: true,
+		UnitNames:      []string{"web.container"},
+		UnitNamesKnown: true,
+		IsRootless:     true,
+		RootlessKnown:  true,
+	}
+
+	project := &ir.Project{Units: units}
+	project.Sort()
+
+	// Find which rules this project actually trips, so the assertion covers
+	// real findings rather than a hopeful list.
+	baseline := (&Engine{Host: host}).Run(project)
+	fired := map[string]bool{}
+	for _, f := range baseline {
+		fired[f.RuleID] = true
+	}
+	if len(fired) < 10 {
+		t.Fatalf("the fixture only trips %d rules (%v); it is meant to exercise most of the catalogue",
+			len(fired), fired)
+	}
+
+	// Every severity a rule can be overridden to must be honoured, including
+	// raising a note to an error and lowering an error to a note.
+	for _, target := range []Severity{Note, Warning, Error} {
+		t.Run("override to "+target.String(), func(t *testing.T) {
+			overrides := map[string]Severity{}
+			for id := range fired {
+				overrides[id] = target
+			}
+
+			engine := &Engine{Host: host, Config: Config{SeverityOverride: overrides}}
+			for _, f := range engine.Run(project) {
+				if f.Severity != target {
+					t.Errorf("%s reported %v despite an override to %v; it is probably "+
+						"building its Finding with a literal severity",
+						f.RuleID, f.Severity, target)
+				}
+				// The JSON mirror must agree, or machine consumers see a
+				// different severity from human readers.
+				if f.SeverityJS != target.String() {
+					t.Errorf("%s: JSON severity %q disagrees with %v",
+						f.RuleID, f.SeverityJS, target)
+				}
+			}
+		})
+	}
+}
+
+// TestOverrideAffectsTheExitCode is the reason the bug mattered: severity
+// drives the exit code, so a rule ignoring an override lets a build pass that
+// the project asked to fail.
+func TestOverrideAffectsTheExitCode(t *testing.T) {
+	// QD040 at its default is a note for a short name, which does not fail a
+	// build. A project that considers unqualified images unacceptable raises
+	// it, and must then get a failing exit code.
+	u := unitFromText(t, "web.container",
+		"[Container]\nImage=nginx:1.27\n[Install]\nWantedBy=default.target\n")
+	project := &ir.Project{Units: []*ir.Unit{u}}
+
+	def := (&Engine{Host: hostctx.Unknown{}}).Run(project)
+	if got := ExitCode(def); got != 0 {
+		t.Fatalf("default exit = %d, want 0 (a note alone should not fail a build)", got)
+	}
+
+	raised := (&Engine{
+		Host:   hostctx.Unknown{},
+		Config: Config{SeverityOverride: map[string]Severity{"QD040": Error}},
+	}).Run(project)
+
+	if got := ExitCode(raised); got != 2 {
+		t.Errorf("exit = %d after raising QD040 to error, want 2; the override was ignored", got)
+	}
+}

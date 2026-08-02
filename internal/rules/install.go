@@ -88,7 +88,7 @@ func checkQD022(c *Context) []Finding {
 			continue
 		}
 
-		severity := c.Severity("QD022", Error)
+		severity := Error
 		message := fmt.Sprintf("%s has no [Install] section, so it will never start automatically", u.Name)
 		if u.HasInstall {
 			message = fmt.Sprintf("%s has an empty [Install] section, so it will never start automatically", u.Name)
@@ -125,7 +125,7 @@ func checkQD023(c *Context) []Finding {
 			}
 			findings = append(findings, Finding{
 				RuleID:     "QD023",
-				Severity:   c.Severity("QD023", Warning),
+				Severity:   Warning,
 				Confidence: Confirmed,
 				Unit:       u.Path,
 				Line:       kv.Line,

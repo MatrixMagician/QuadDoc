@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/MatrixMagician/quaddoc/internal/rules"
@@ -232,7 +233,10 @@ func ParseSuppressions(unit, text string) []Suppression {
 //
 // The reason is mandatory because the cost of a suppression is paid later, by
 // whoever finds it and cannot tell whether it is still justified.
-func ApplySuppressions(findings []rules.Finding, byUnit map[string][]Suppression) []rules.Finding {
+//
+// The config argument supplies severity overrides for QD000, which is raised
+// here rather than by the rule engine and so would otherwise ignore them.
+func (c *Config) ApplySuppressions(findings []rules.Finding, byUnit map[string][]Suppression) []rules.Finding {
 	var kept []rules.Finding
 
 	for _, f := range findings {
@@ -248,16 +252,32 @@ func ApplySuppressions(findings []rules.Finding, byUnit map[string][]Suppression
 		}
 	}
 
-	// A directive with no reason suppresses nothing and is reported.
-	for unit, suppressions := range byUnit {
-		for _, s := range suppressions {
+	// A directive with no reason suppresses nothing and is reported. QD000 is
+	// raised here rather than by the engine, so the severity override has to
+	// be applied by hand; the engine's central handling does not reach it.
+	severity := rules.Warning
+	if c != nil {
+		if override, ok := c.Severity["QD000"]; ok {
+			severity = override
+		}
+	}
+
+	// Sort the units so the reported order does not depend on map iteration.
+	units := make([]string, 0, len(byUnit))
+	for unit := range byUnit {
+		units = append(units, unit)
+	}
+	sort.Strings(units)
+
+	for _, unit := range units {
+		for _, s := range byUnit[unit] {
 			if s.Reason != "" {
 				continue
 			}
 			kept = append(kept, rules.Finding{
 				RuleID:     "QD000",
-				Severity:   rules.Warning,
-				SeverityJS: rules.Warning.String(),
+				Severity:   severity,
+				SeverityJS: severity.String(),
 				Confidence: rules.Confirmed,
 				Unit:       unit,
 				Line:       s.Line,

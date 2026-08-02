@@ -116,7 +116,7 @@ func checkQD040(c *Context) []Finding {
 			case ref.Registry == "":
 				findings = append(findings, Finding{
 					RuleID:     "QD040",
-					Severity:   c.Severity("QD040", Error),
+					Severity:   Error,
 					Confidence: Confirmed,
 					Unit:       u.Path,
 					Line:       line,
@@ -129,7 +129,7 @@ func checkQD040(c *Context) []Finding {
 			case ref.Digest:
 				findings = append(findings, Finding{
 					RuleID:     "QD040",
-					Severity:   c.Severity("QD040", Warning),
+					Severity:   Warning,
 					Confidence: Confirmed,
 					Unit:       u.Path,
 					Line:       line,
@@ -141,7 +141,7 @@ func checkQD040(c *Context) []Finding {
 			case floatingTags[ref.Tag]:
 				findings = append(findings, Finding{
 					RuleID:     "QD040",
-					Severity:   c.Severity("QD040", Warning),
+					Severity:   Warning,
 					Confidence: Confirmed,
 					Unit:       u.Path,
 					Line:       line,
@@ -238,7 +238,7 @@ func checkQD041(c *Context) []Finding {
 			}
 			findings = append(findings, Finding{
 				RuleID:     "QD041",
-				Severity:   c.Severity("QD041", Warning),
+				Severity:   Warning,
 				Confidence: Confirmed,
 				Unit:       u.Path,
 				Line:       env.Line,

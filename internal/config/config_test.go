@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/MatrixMagician/quaddoc/internal/rules"
@@ -164,14 +165,16 @@ func TestApplySuppressionsNeedsAReason(t *testing.T) {
 		{RuleID: "QD001", Unit: "web.container", Severity: rules.Error},
 	}
 
-	withReason := ApplySuppressions(findings, map[string][]Suppression{
+	cfg := &Config{Disabled: map[string]bool{}, Severity: map[string]rules.Severity{}}
+
+	withReason := cfg.ApplySuppressions(findings, map[string][]Suppression{
 		"web.container": {{Rules: []string{"QD001"}, Reason: "labelled at mount time", Line: 1}},
 	})
 	if len(withReason) != 0 {
 		t.Errorf("a reasoned suppression should suppress the finding, got %+v", withReason)
 	}
 
-	withoutReason := ApplySuppressions(findings, map[string][]Suppression{
+	withoutReason := cfg.ApplySuppressions(findings, map[string][]Suppression{
 		"web.container": {{Rules: []string{"QD001"}, Line: 1}},
 	})
 	var sawOriginal, sawComplaint bool
@@ -221,5 +224,67 @@ func TestStripComment(t *testing.T) {
 		if got := stripComment(in); got != want {
 			t.Errorf("stripComment(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestQD000HonoursASeverityOverride(t *testing.T) {
+	// QD000 is raised here rather than by the rule engine, so it does not get
+	// the engine's central override handling and has to apply it itself. It
+	// previously hardcoded Warning, which meant a project could not raise
+	// unreasoned suppressions to an error and gate on them.
+	byUnit := map[string][]Suppression{
+		"web.container": {{Rules: []string{"QD001"}, Line: 1}},
+	}
+
+	cfg := &Config{
+		Disabled: map[string]bool{},
+		Severity: map[string]rules.Severity{"QD000": rules.Error},
+	}
+
+	var found bool
+	for _, f := range cfg.ApplySuppressions(nil, byUnit) {
+		if f.RuleID != "QD000" {
+			continue
+		}
+		found = true
+		if f.Severity != rules.Error {
+			t.Errorf("severity = %v, want Error after the override", f.Severity)
+		}
+		if f.SeverityJS != "error" {
+			t.Errorf("JSON severity = %q, want \"error\"", f.SeverityJS)
+		}
+	}
+	if !found {
+		t.Fatal("QD000 was not reported")
+	}
+}
+
+func TestUnreasonedSuppressionsAreReportedDeterministically(t *testing.T) {
+	// Iterating the map directly made the order depend on Go's map
+	// randomisation, which shows up as spurious diffs in JSON and SARIF
+	// output.
+	byUnit := map[string][]Suppression{
+		"z.container": {{Rules: []string{"QD001"}, Line: 1}},
+		"a.container": {{Rules: []string{"QD001"}, Line: 1}},
+		"m.container": {{Rules: []string{"QD001"}, Line: 1}},
+	}
+	cfg := &Config{Disabled: map[string]bool{}, Severity: map[string]rules.Severity{}}
+
+	var first []string
+	for i := 0; i < 20; i++ {
+		var order []string
+		for _, f := range cfg.ApplySuppressions(nil, byUnit) {
+			order = append(order, f.Unit)
+		}
+		if i == 0 {
+			first = order
+			continue
+		}
+		if strings.Join(order, ",") != strings.Join(first, ",") {
+			t.Fatalf("order varies between runs: %v then %v", first, order)
+		}
+	}
+	if len(first) != 3 || first[0] != "a.container" {
+		t.Errorf("expected units sorted, got %v", first)
 	}
 }

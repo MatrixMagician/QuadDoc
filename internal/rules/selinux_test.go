@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/MatrixMagician/quaddoc/internal/hostctx"
+	"github.com/MatrixMagician/quaddoc/internal/ir"
 )
 
 // enforcing is a host where SELinux is on, matching the reference platform.
@@ -442,4 +443,68 @@ func itoa(n int) string {
 		n /= 10
 	}
 	return string(digits)
+}
+
+// TestHostDowngradeResistsBeingRaisedByConfig covers the interaction between
+// the two things that can change a severity.
+//
+// A project may raise a rule it cares about. It may not raise a finding the
+// host has established does not apply here: under a permissive kernel the
+// label is still wrong, but it is not being enforced today, and reporting that
+// as an error would be asserting something untrue about the machine. See
+// ADR-0004.
+func TestHostDowngradeResistsBeingRaisedByConfig(t *testing.T) {
+	unit := unitFromText(t, "web.container",
+		"[Container]\nImage=nginx\nVolume=/srv/site:/data\n")
+
+	tests := []struct {
+		name     string
+		mode     hostctx.SELinuxMode
+		override Severity
+		want     Severity
+	}{
+		{
+			name: "enforcing honours a raise",
+			mode: hostctx.SELinuxEnforcing, override: Error, want: Error,
+		},
+		{
+			name: "enforcing honours a lowering",
+			mode: hostctx.SELinuxEnforcing, override: Note, want: Note,
+		},
+		{
+			// The host downgraded this to a note. Configuration asking for an
+			// error does not make SELinux enforcing.
+			name: "permissive resists a raise",
+			mode: hostctx.SELinuxPermissive, override: Error, want: Note,
+		},
+		{
+			// Lowering further is still the project's business.
+			name: "permissive accepts a further lowering",
+			mode: hostctx.SELinuxPermissive, override: Note, want: Note,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			engine := &Engine{
+				Host:   hostctx.Static{SELinuxMode: tt.mode},
+				Config: Config{SeverityOverride: map[string]Severity{"QD001": tt.override}},
+			}
+			project := &ir.Project{Units: []*ir.Unit{unit}}
+
+			var found bool
+			for _, f := range engine.Run(project) {
+				if f.RuleID != "QD001" {
+					continue
+				}
+				found = true
+				if f.Severity != tt.want {
+					t.Errorf("severity = %v, want %v", f.Severity, tt.want)
+				}
+			}
+			if !found {
+				t.Fatal("QD001 did not fire")
+			}
+		})
+	}
 }
