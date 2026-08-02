@@ -5,6 +5,12 @@
 # working on a machine they cannot install a toolchain on.
 version: 2
 
+# The project name defaults to the repository name, which is QuadDoc, but the
+# binary and the install instructions both say quaddoc. Pinning it keeps the
+# archive names lowercase and consistent with what the README tells people to
+# download.
+project_name: quaddoc
+
 before:
   hooks:
     - go mod tidy
