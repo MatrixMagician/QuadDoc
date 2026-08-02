@@ -1,3 +1,8 @@
+# Releases are built here, not on a maintainer's machine.
+#
+# Publishing by hand and letting this workflow run for the same tag races:
+# whichever finishes second fails with 'already_exists' on every asset. Tagging
+# and pushing is the whole release procedure; this does the rest.
 name: Release
 
 on:
@@ -18,6 +23,13 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: stable
+
+      # The release notes quote the rule reference, and the archives ship it,
+      # so a stale docs/rules.md would be published alongside the binaries.
+      - name: Check the rule reference is up to date
+        run: |
+          go run ./cmd/quaddoc rules --markdown > /tmp/rules.md
+          diff -u docs/rules.md /tmp/rules.md
 
       - uses: goreleaser/goreleaser-action@v6
         with:

@@ -259,6 +259,7 @@ user units. Minimum Podman 5.0 ([ADR-0002](docs/adr/0002-minimum-podman-version.
 ## Documentation
 
 - [Rule reference](docs/rules.md) — generated from rule metadata
+- [Releasing](docs/releasing.md) — how a release is cut
 - [Specification](SPEC.md) and [review](docs/spec-review.md)
 - [Architecture decisions](docs/adr/)
 - [Domain vocabulary](CONTEXT.md)
