@@ -45,12 +45,31 @@ checksum:
   name_template: checksums.txt
 
 changelog:
-  sort: asc
+  # `sort: asc` orders alphabetically, which for a first release listed
+  # "Initial commit" in the middle of the feature work. Grouping by area is
+  # more useful to a reader than any ordering of a flat list.
+  use: git
+  groups:
+    - title: Rules
+      regexp: '(?i)rules?|QD\d'
+      order: 0
+    - title: Conversion and fixes
+      regexp: "(?i)convert|fix engine|compose"
+      order: 1
+    - title: Output and integration
+      regexp: "(?i)sarif|json|output|reference|doctor"
+      order: 2
+    - title: Correctness and validation
+      regexp: "(?i)mutation|citation|review|verify"
+      order: 3
+    - title: Other
+      order: 99
   filters:
     exclude:
       - "^docs:"
       - "^test:"
       - "^chore:"
+      - "^Initial commit$"
 
 release:
   footer: |
