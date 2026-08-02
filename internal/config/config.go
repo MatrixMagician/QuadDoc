@@ -253,8 +253,13 @@ func (c *Config) ApplySuppressions(findings []rules.Finding, byUnit map[string][
 	}
 
 	// A directive with no reason suppresses nothing and is reported. QD000 is
-	// raised here rather than by the engine, so the severity override has to
-	// be applied by hand; the engine's central handling does not reach it.
+	// raised here rather than by the engine, so both halves of its
+	// configuration have to be applied by hand; the engine's central handling
+	// does not reach it.
+	if c != nil && c.Disabled["QD000"] {
+		return kept
+	}
+
 	severity := rules.Warning
 	if c != nil {
 		if override, ok := c.Severity["QD000"]; ok {

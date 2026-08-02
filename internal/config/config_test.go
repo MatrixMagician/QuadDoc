@@ -288,3 +288,53 @@ func TestUnreasonedSuppressionsAreReportedDeterministically(t *testing.T) {
 		t.Errorf("expected units sorted, got %v", first)
 	}
 }
+
+func TestQD000CanBeDisabled(t *testing.T) {
+	// QD000 is raised outside the rule engine, so it misses the engine's
+	// central handling of both halves of a rule's configuration. The severity
+	// override was fixed first; disabling was still ignored, which is the same
+	// bug wearing a different hat.
+	byUnit := map[string][]Suppression{
+		"web.container": {{Rules: []string{"QD001"}, Line: 1}},
+	}
+
+	enabled := &Config{Disabled: map[string]bool{}, Severity: map[string]rules.Severity{}}
+	if got := len(enabled.ApplySuppressions(nil, byUnit)); got == 0 {
+		t.Fatal("QD000 should be reported when it is enabled")
+	}
+
+	disabled := &Config{
+		Disabled: map[string]bool{"QD000": true},
+		Severity: map[string]rules.Severity{},
+	}
+	for _, f := range disabled.ApplySuppressions(nil, byUnit) {
+		if f.RuleID == "QD000" {
+			t.Errorf("QD000 was reported despite being disabled: %+v", f)
+		}
+	}
+}
+
+func TestDisablingQD000DoesNotAffectSuppression(t *testing.T) {
+	// Turning off the complaint about a missing reason must not make an
+	// unreasoned directive start working. The reason is still mandatory; the
+	// project has only asked not to be told about it.
+	findings := []rules.Finding{{RuleID: "QD001", Unit: "web.container", Severity: rules.Error}}
+	byUnit := map[string][]Suppression{
+		"web.container": {{Rules: []string{"QD001"}, Line: 1}},
+	}
+
+	cfg := &Config{
+		Disabled: map[string]bool{"QD000": true},
+		Severity: map[string]rules.Severity{},
+	}
+
+	var sawOriginal bool
+	for _, f := range cfg.ApplySuppressions(findings, byUnit) {
+		if f.RuleID == "QD001" {
+			sawOriginal = true
+		}
+	}
+	if !sawOriginal {
+		t.Error("an unreasoned suppression must still suppress nothing, even with QD000 off")
+	}
+}
