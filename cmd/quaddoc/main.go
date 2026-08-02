@@ -71,6 +71,7 @@ func main() {
 func runLint(args []string) int {
 	fs := flag.NewFlagSet("lint", flag.ExitOnError)
 	asJSON := fs.Bool("json", false, "emit findings as JSON")
+	asSARIF := fs.Bool("sarif", false, "emit findings as SARIF 2.1.0, for CI and code review")
 	verbose := fs.Bool("explain", false, "include each rule's rationale and citation")
 	disable := fs.String("disable", "", "comma-separated rule IDs to skip")
 	hostContext := fs.String("host-context", "",
@@ -112,12 +113,18 @@ func runLint(args []string) int {
 	engine := &rules.Engine{Config: ruleConfig, Host: host}
 	findings := config.ApplySuppressions(engine.Run(project), suppressions(project))
 
-	if *asJSON {
+	switch {
+	case *asSARIF:
+		if err := output.SARIF(os.Stdout, findings, version); err != nil {
+			fmt.Fprintf(os.Stderr, "quaddoc: writing SARIF: %v\n", err)
+			return 2
+		}
+	case *asJSON:
 		if err := output.JSON(os.Stdout, findings); err != nil {
 			fmt.Fprintf(os.Stderr, "quaddoc: writing JSON: %v\n", err)
 			return 2
 		}
-	} else {
+	default:
 		output.Human{
 			Colour:  output.ColourEnabled(os.Stdout),
 			Verbose: *verbose,
@@ -244,19 +251,32 @@ func runConvert(args []string) int {
 
 func runRules(args []string) int {
 	fs := flag.NewFlagSet("rules", flag.ExitOnError)
-	if err := fs.Parse(args); err != nil {
+	asMarkdown := fs.Bool("markdown", false, "render the reference as Markdown, for publishing")
+
+	positional, err := parseArgs(fs, args)
+	if err != nil {
 		return 2
 	}
 
-	if id := fs.Arg(0); id != "" {
+	if *asMarkdown {
+		fmt.Print(output.RulesMarkdown())
+		return 0
+	}
+
+	id := ""
+	if len(positional) > 0 {
+		id = positional[0]
+	}
+	if id != "" {
 		r, ok := rules.Lookup(id)
 		if !ok {
 			fmt.Fprintf(os.Stderr, "quaddoc: no such rule %q\n", id)
 			return 2
 		}
 		fmt.Printf("%s  %s\n\n", r.ID, r.Summary)
-		fmt.Printf("Severity: %s\n", r.DefaultSeverity)
-		fmt.Printf("Fixable:  %t\n\n", r.Fixable)
+		fmt.Printf("Severity:     %s\n", r.DefaultSeverity)
+		fmt.Printf("Fixable:      %t\n", r.Fixable)
+		fmt.Printf("Host context: %t\n\n", r.NeedsHostContext)
 		fmt.Printf("%s\n\n", r.Rationale)
 		fmt.Printf("Source: %s\n", r.Citation)
 		return 0

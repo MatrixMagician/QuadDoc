@@ -81,6 +81,12 @@ func FromParsed(f *quadlet.File) *Unit {
 		Source: f,
 	}
 
+	for _, e := range f.Entries() {
+		u.Entries = append(u.Entries, SourceEntry{
+			Section: e.Section, Key: e.Key, Value: e.Value, Line: e.Line,
+		})
+	}
+
 	section := kind.Section()
 	if section == "" {
 		return u

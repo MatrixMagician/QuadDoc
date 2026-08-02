@@ -6,6 +6,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/MatrixMagician/quaddoc/internal/rules"
@@ -165,5 +166,146 @@ func TestColourDisabledForNonTerminal(t *testing.T) {
 	var buf bytes.Buffer
 	if ColourEnabled(&buf) {
 		t.Error("colour must be off when the destination is not a terminal")
+	}
+}
+
+func TestSARIFStructure(t *testing.T) {
+	var buf bytes.Buffer
+	if err := SARIF(&buf, sample(), "1.2.3"); err != nil {
+		t.Fatalf("SARIF: %v", err)
+	}
+
+	var log struct {
+		Schema  string `json:"$schema"`
+		Version string `json:"version"`
+		Runs    []struct {
+			Tool struct {
+				Driver struct {
+					Name    string `json:"name"`
+					Version string `json:"version"`
+					Rules   []struct {
+						ID                   string                 `json:"id"`
+						ShortDescription     struct{ Text string }  `json:"shortDescription"`
+						Help                 struct{ Text string }  `json:"help"`
+						DefaultConfiguration struct{ Level string } `json:"defaultConfiguration"`
+					} `json:"rules"`
+				} `json:"driver"`
+			} `json:"tool"`
+			Results []struct {
+				RuleID    string                `json:"ruleId"`
+				RuleIndex int                   `json:"ruleIndex"`
+				Level     string                `json:"level"`
+				Message   struct{ Text string } `json:"message"`
+				Locations []struct {
+					PhysicalLocation struct {
+						ArtifactLocation struct{ URI string }     `json:"artifactLocation"`
+						Region           *struct{ StartLine int } `json:"region"`
+					} `json:"physicalLocation"`
+				} `json:"locations"`
+			} `json:"results"`
+		} `json:"runs"`
+	}
+
+	if err := json.Unmarshal(buf.Bytes(), &log); err != nil {
+		t.Fatalf("SARIF output is not valid JSON: %v", err)
+	}
+
+	if log.Version != "2.1.0" {
+		t.Errorf("version = %q, want 2.1.0", log.Version)
+	}
+	if !strings.HasSuffix(log.Schema, "sarif-schema-2.1.0.json") {
+		t.Errorf("schema = %q, want the 2.1.0 schema", log.Schema)
+	}
+	if len(log.Runs) != 1 {
+		t.Fatalf("runs = %d, want 1", len(log.Runs))
+	}
+
+	run := log.Runs[0]
+	if run.Tool.Driver.Name != "quaddoc" || run.Tool.Driver.Version != "1.2.3" {
+		t.Errorf("driver = %+v, want quaddoc 1.2.3", run.Tool.Driver)
+	}
+
+	// Every registered rule is declared, not only those that fired, so a rule
+	// going quiet does not look like the rule disappearing.
+	if len(run.Tool.Driver.Rules) != len(rules.All()) {
+		t.Errorf("declared %d rules, want all %d", len(run.Tool.Driver.Rules), len(rules.All()))
+	}
+	for _, r := range run.Tool.Driver.Rules {
+		if r.ShortDescription.Text == "" {
+			t.Errorf("%s has no short description", r.ID)
+		}
+		// The citation is what stops a rule being folklore, so it must reach
+		// the reviewer who meets the rule in a pull request.
+		if !strings.Contains(r.Help.Text, "Source:") {
+			t.Errorf("%s's help text omits its citation", r.ID)
+		}
+	}
+
+	if len(run.Results) != len(sample()) {
+		t.Fatalf("results = %d, want %d", len(run.Results), len(sample()))
+	}
+
+	// ruleIndex must point at the right declaration, or a consumer shows the
+	// wrong rule beside the finding.
+	for _, res := range run.Results {
+		if res.RuleIndex < 0 || res.RuleIndex >= len(run.Tool.Driver.Rules) {
+			t.Fatalf("%s has ruleIndex %d, out of range", res.RuleID, res.RuleIndex)
+		}
+		if got := run.Tool.Driver.Rules[res.RuleIndex].ID; got != res.RuleID {
+			t.Errorf("ruleIndex %d points at %s, but the result is %s",
+				res.RuleIndex, got, res.RuleID)
+		}
+		// A reviewer wants to know what to do, not merely what is wrong.
+		if !strings.Contains(res.Message.Text, "\n") {
+			t.Errorf("%s's message carries no remediation: %q", res.RuleID, res.Message.Text)
+		}
+	}
+}
+
+func TestSARIFLevelsMapToSARIFVocabulary(t *testing.T) {
+	tests := map[rules.Severity]string{
+		rules.Error:   "error",
+		rules.Warning: "warning",
+		rules.Note:    "note",
+	}
+	for severity, want := range tests {
+		if got := sarifLevel(severity); got != want {
+			t.Errorf("sarifLevel(%v) = %q, want %q", severity, got, want)
+		}
+	}
+}
+
+func TestSARIFOmitsRegionWhenThereIsNoLine(t *testing.T) {
+	// A finding about a unit as a whole has no line, and SARIF's region
+	// requires a startLine of at least 1, so the region must be absent
+	// rather than zero.
+	var buf bytes.Buffer
+	findings := []rules.Finding{{
+		RuleID: "QD022", Severity: rules.Error, Unit: "web.container",
+		Message: "no [Install]", Remediation: "add one",
+	}}
+	if err := SARIF(&buf, findings, "test"); err != nil {
+		t.Fatalf("SARIF: %v", err)
+	}
+	if bytes.Contains(buf.Bytes(), []byte(`"startLine": 0`)) {
+		t.Errorf("a zero startLine is invalid SARIF:\n%s", buf.String())
+	}
+}
+
+func TestRulesMarkdownCoversEveryRule(t *testing.T) {
+	// The published reference is generated from the same metadata the engine
+	// uses, so it cannot drift from the implementation.
+	doc := RulesMarkdown()
+
+	for _, r := range rules.All() {
+		if !strings.Contains(doc, "## "+r.ID) {
+			t.Errorf("the reference omits %s", r.ID)
+		}
+		if !strings.Contains(doc, r.Summary) {
+			t.Errorf("the reference omits %s's summary", r.ID)
+		}
+		if !strings.Contains(doc, r.Citation) {
+			t.Errorf("the reference omits %s's citation", r.ID)
+		}
 	}
 }

@@ -170,6 +170,11 @@ type Unit struct {
 	// can reach keys the IR does not model. Nil for generated units.
 	Source SourceFile
 
+	// Entries is every assignment in the file, with its section and line, so
+	// rules can examine keys the IR does not model. QD042 needs this to spot
+	// a key that is not modelled *because* it is not a real key.
+	Entries []SourceEntry
+
 	// keyLines records where each scalar key was declared, so findings about
 	// a key can cite a line. Repeated keys carry their own line on the value.
 	keyLines map[string]int
@@ -199,6 +204,14 @@ type SourceFile interface {
 	Values(section, key string) []string
 	// Render writes the file back out.
 	Render() string
+}
+
+// SourceEntry is one assignment as it appeared in the file.
+type SourceEntry struct {
+	Section string
+	Key     string
+	Value   string
+	Line    int
 }
 
 // KeyValue is a key and its value with the line it appeared on.
