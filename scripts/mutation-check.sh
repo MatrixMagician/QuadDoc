@@ -22,6 +22,15 @@ run_mutation() {
   cp "$file" /tmp/mut.bak
   python3 -c "$script" || { cp /tmp/mut.bak "$file"; printf '%-46s SCRIPT-FAILED\n' "$name"; return; }
 
+  # A mutation whose target string has drifted changes nothing and then reports
+  # SURVIVED, which looks like a missing test but is a stale script. Refactors
+  # cause this routinely, so check the file actually changed.
+  if cmp -s /tmp/mut.bak "$file"; then
+    printf '%-46s NOT-APPLIED  <-- stale mutation, fix the script\n' "$name"
+    cp /tmp/mut.bak "$file"
+    return
+  fi
+
   if go test -count=1 "$pkg" >/dev/null 2>&1; then
     printf '%-46s SURVIVED  <-- gap\n' "$name"
   else
@@ -195,7 +204,7 @@ open(p,'w').write(s)"
 
 run_mutation "suppressions are never applied" "$M" ./cmd/quaddoc "
 p='$M'; s=open(p).read()
-s=s.replace('config.ApplySuppressions(engine.Run(project), suppressions(project))','engine.Run(project)')
+s=s.replace('projectConfig.ApplySuppressions(engine.Run(project), suppressions(project))','engine.Run(project)')
 open(p,'w').write(s)"
 
 run_mutation "--sarif falls back to human output" "$M" ./cmd/quaddoc "
