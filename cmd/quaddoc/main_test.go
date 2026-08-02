@@ -2,24 +2,54 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
-// buildCLI compiles the binary once per test run, so the tests exercise the
-// real command-line surface rather than calling internals directly.
+// builtCLI caches the compiled binary for the whole test run.
+//
+// These tests deliberately exercise the real command-line surface rather than
+// calling internals, which means compiling. Doing that per test cost 31 `go
+// build` invocations and about 7 seconds, against 0.13s for every other
+// package combined. Building once brings the suite back to something you can
+// run on every save.
+var builtCLI struct {
+	once sync.Once
+	path string
+	err  error
+}
+
+// buildCLI compiles the binary once per test run and returns its path.
 func buildCLI(t *testing.T) string {
 	t.Helper()
-	bin := filepath.Join(t.TempDir(), "quaddoc")
 
-	cmd := exec.Command("go", "build", "-o", bin, ".")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("building quaddoc: %v\n%s", err, out)
+	builtCLI.once.Do(func() {
+		// Not t.TempDir(): that is removed when the first test finishes,
+		// which would delete the binary the rest still need.
+		dir, err := os.MkdirTemp("", "quaddoc-test-")
+		if err != nil {
+			builtCLI.err = err
+			return
+		}
+		bin := filepath.Join(dir, "quaddoc")
+
+		cmd := exec.Command("go", "build", "-o", bin, ".")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			builtCLI.err = fmt.Errorf("building quaddoc: %w\n%s", err, out)
+			return
+		}
+		builtCLI.path = bin
+	})
+
+	if builtCLI.err != nil {
+		t.Fatalf("%v", builtCLI.err)
 	}
-	return bin
+	return builtCLI.path
 }
 
 // run executes the binary and returns stdout, stderr, and the exit code.
