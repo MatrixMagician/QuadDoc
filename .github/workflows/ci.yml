@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: true
+
+      - name: Check formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "These files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test -race ./...
+
+      # The Quadlet generator is the acceptance oracle for conversion and for
+      # the fix engine. The tests skip when it is absent, so this job installs
+      # podman to make sure they actually run somewhere.
+      - name: Install podman
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman
+
+      - name: Test against the real Quadlet generator
+        run: |
+          if [ ! -x /usr/libexec/podman/quadlet ] && [ ! -x /usr/lib/podman/quadlet ]; then
+            echo "::warning::Quadlet generator not found; the generator tests will skip"
+          fi
+          go test -run 'Generator' -v ./internal/generate/ ./internal/fix/
+
+      - name: Check the rule reference is up to date
+        run: |
+          go run ./cmd/quaddoc rules --markdown > /tmp/rules.md
+          if ! diff -u docs/rules.md /tmp/rules.md; then
+            echo "::error::docs/rules.md is stale; regenerate with 'quaddoc rules --markdown > docs/rules.md'"
+            exit 1
+          fi
+
+      - name: Lint this project's own fixtures
+        run: |
+          go build -o /tmp/quaddoc ./cmd/quaddoc
+          /tmp/quaddoc convert testdata/fixtures/webstack/compose.yaml --out /tmp/units
+          # The fixture deliberately contains problems, so a non-zero exit is
+          # expected; what matters is that the tool runs end to end.
+          /tmp/quaddoc lint /tmp/units || true
+          /tmp/quaddoc doctor
+
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [linux]
+        goarch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: go build -o /dev/null ./cmd/quaddoc

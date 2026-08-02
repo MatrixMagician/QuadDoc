@@ -1,0 +1,59 @@
+# goreleaser configuration for QuadDoc.
+#
+# CGO is off so the binaries are genuinely static and run on any glibc or musl
+# system, which matters because the people who most need this tool are often
+# working on a machine they cannot install a toolchain on.
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+    - go test ./...
+
+builds:
+  - id: quaddoc
+    main: ./cmd/quaddoc
+    binary: quaddoc
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+archives:
+  - id: quaddoc
+    formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - README.md
+      - LICENSE
+      - docs/rules.md
+      - docs/adr/*
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+release:
+  footer: |
+    ## Verifying the units it generates
+
+    QuadDoc's generated units are checked against Podman's own Quadlet
+    generator, not only against golden files:
+
+        QUADLET_UNIT_DIRS=units/ /usr/libexec/podman/quadlet -dryrun -user
+
+    See the [rule reference](https://github.com/MatrixMagician/QuadDoc/blob/main/docs/rules.md)
+    for what each check encodes and the documentation it cites.
