@@ -118,7 +118,7 @@ Download a static binary from the
 [releases page](https://github.com/MatrixMagician/QuadDoc/releases), or:
 
 ```sh
-VERSION=0.1.1
+VERSION=0.1.2
 ARCH=$(uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/')
 BASE=https://github.com/MatrixMagician/QuadDoc/releases/download/v${VERSION}
 
