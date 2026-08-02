@@ -101,7 +101,6 @@ func checkQD022(c *Context) []Finding {
 		}
 
 		findings = append(findings, Finding{
-			RuleID:     "QD022",
 			Severity:   severity,
 			Confidence: Confirmed, // Reasoned entirely from the unit; no host facts needed.
 			Unit:       u.Path,
@@ -124,7 +123,6 @@ func checkQD023(c *Context) []Finding {
 				continue
 			}
 			findings = append(findings, Finding{
-				RuleID:     "QD023",
 				Severity:   Warning,
 				Confidence: Confirmed,
 				Unit:       u.Path,

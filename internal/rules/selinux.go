@@ -193,7 +193,6 @@ func checkQD001(c *Context) []Finding {
 			}
 
 			finding := Finding{
-				RuleID:     "QD001",
 				Severity:   severity,
 				Confidence: confidence,
 				Unit:       u.Path,
@@ -240,7 +239,6 @@ func checkQD002(c *Context) []Finding {
 			}
 
 			finding := Finding{
-				RuleID:     "QD002",
 				Severity:   severity,
 				Confidence: confidence,
 				Unit:       u.Path,
@@ -282,7 +280,6 @@ func checkQD003(c *Context) []Finding {
 			// and ineffective.
 			if strings.Contains(mount.Options, "context=") {
 				findings = append(findings, Finding{
-					RuleID:     "QD003",
 					Severity:   Warning,
 					Confidence: Confirmed,
 					Unit:       u.Path,
@@ -304,7 +301,6 @@ func checkQD003(c *Context) []Finding {
 			}
 
 			findings = append(findings, Finding{
-				RuleID:     "QD003",
 				Severity:   Warning,
 				Confidence: Confirmed,
 				Unit:       u.Path,
@@ -340,7 +336,6 @@ func checkQD004(c *Context) []Finding {
 			// done at relabel time, and a machine that is permissive today
 			// may be enforcing tomorrow with its labels already rewritten.
 			findings = append(findings, Finding{
-				RuleID:     "QD004",
 				Severity:   Error,
 				Confidence: Confirmed,
 				Unit:       u.Path,

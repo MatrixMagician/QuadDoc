@@ -143,7 +143,6 @@ func checkQD030(c *Context) []Finding {
 		}
 
 		findings = append(findings, Finding{
-			RuleID:     "QD030",
 			Severity:   Error,
 			Confidence: Confirmed,
 			Unit:       u.Path,
@@ -201,7 +200,6 @@ func checkQD031(c *Context) []Finding {
 			}
 
 			findings = append(findings, Finding{
-				RuleID:     "QD031",
 				Severity:   Warning,
 				Confidence: confidence,
 				Unit:       u.Path,
@@ -244,7 +242,6 @@ func checkQD032(c *Context) []Finding {
 		}
 
 		findings = append(findings, Finding{
-			RuleID:     "QD032",
 			Severity:   Error,
 			Confidence: Confirmed,
 			Unit:       u.Path,
@@ -296,7 +293,6 @@ func checkQD020(c *Context) []Finding {
 			}
 
 			findings = append(findings, Finding{
-				RuleID:     "QD020",
 				Severity:   Warning,
 				Confidence: Confirmed,
 				Unit:       u.Path,
@@ -321,7 +317,6 @@ func checkQD021(c *Context) []Finding {
 		}
 
 		findings = append(findings, Finding{
-			RuleID:     "QD021",
 			Severity:   Error,
 			Confidence: Confirmed,
 			Unit:       u.Path,

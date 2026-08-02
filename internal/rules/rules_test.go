@@ -431,3 +431,60 @@ func TestOverrideAffectsTheExitCode(t *testing.T) {
 		t.Errorf("exit = %d after raising QD040 to error, want 2; the override was ignored", got)
 	}
 }
+
+// TestEngineStampsTheRuleID checks the engine fills in the ID a rule no longer
+// has to restate. Every finding must carry the ID of the rule that produced it,
+// since the ID selects its severity, documentation, and fixability.
+func TestEngineStampsTheRuleID(t *testing.T) {
+	units := namedUnits(t, map[string]string{
+		"web.container": "[Container]\nImage=nginx:latest\nAutoUpdate=registry\n" +
+			"Volume=/srv/site:/data\nEnvironment=API_TOKEN=sk_live_x\n",
+		"db.container": "[Container]\nImage=postgres\n",
+	})
+	project := &ir.Project{Units: units}
+	project.Sort()
+
+	findings := (&Engine{Host: hostctx.Static{SELinuxMode: hostctx.SELinuxEnforcing}}).Run(project)
+	if len(findings) == 0 {
+		t.Fatal("expected findings")
+	}
+
+	for _, f := range findings {
+		if f.RuleID == "" {
+			t.Errorf("a finding was reported with no rule ID: %+v", f)
+			continue
+		}
+		if _, known := Lookup(f.RuleID); !known {
+			t.Errorf("finding reported under an unregistered rule %q", f.RuleID)
+		}
+	}
+}
+
+// TestEngineRejectsAMisattributedFinding guards the stamping. A rule emitting
+// another rule's ID would report under metadata describing something else, so
+// the engine treats it as the programming error it is.
+func TestEngineRejectsAMisattributedFinding(t *testing.T) {
+	impostor := &Rule{
+		ID:              "QD999",
+		Summary:         "test rule",
+		Rationale:       "test",
+		Citation:        "test",
+		DefaultSeverity: Warning,
+		Check: func(*Context) []Finding {
+			return []Finding{{RuleID: "QD001", Message: "not mine", Remediation: "n/a"}}
+		},
+	}
+
+	// Register and remove it around the check, so the catalogue is unchanged
+	// for other tests.
+	Register(impostor)
+	defer delete(registry, "QD999")
+
+	defer func() {
+		if recover() == nil {
+			t.Error("a rule emitting another rule's ID should panic")
+		}
+	}()
+
+	(&Engine{Host: hostctx.Unknown{}}).Run(&ir.Project{})
+}

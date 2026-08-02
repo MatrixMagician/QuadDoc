@@ -115,7 +115,6 @@ func checkQD040(c *Context) []Finding {
 			switch {
 			case ref.Registry == "":
 				findings = append(findings, Finding{
-					RuleID:     "QD040",
 					Severity:   Error,
 					Confidence: Confirmed,
 					Unit:       u.Path,
@@ -128,7 +127,6 @@ func checkQD040(c *Context) []Finding {
 				})
 			case ref.Digest:
 				findings = append(findings, Finding{
-					RuleID:     "QD040",
 					Severity:   Warning,
 					Confidence: Confirmed,
 					Unit:       u.Path,
@@ -140,7 +138,6 @@ func checkQD040(c *Context) []Finding {
 				})
 			case floatingTags[ref.Tag]:
 				findings = append(findings, Finding{
-					RuleID:     "QD040",
 					Severity:   Warning,
 					Confidence: Confirmed,
 					Unit:       u.Path,
@@ -159,7 +156,6 @@ func checkQD040(c *Context) []Finding {
 		// problem, and the generator warns about it too, but it is milder.
 		if ref.Registry == "" {
 			findings = append(findings, Finding{
-				RuleID:     "QD040",
 				Severity:   Note,
 				Confidence: Confirmed,
 				Unit:       u.Path,
@@ -237,7 +233,6 @@ func checkQD041(c *Context) []Finding {
 				continue
 			}
 			findings = append(findings, Finding{
-				RuleID:     "QD041",
 				Severity:   Warning,
 				Confidence: Confirmed,
 				Unit:       u.Path,

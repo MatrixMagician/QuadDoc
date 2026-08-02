@@ -229,6 +229,16 @@ func (e *Engine) Run(p *ir.Project) []Finding {
 			continue
 		}
 		for _, f := range r.Check(ctx) {
+			// The engine knows which rule it called, so it stamps the ID
+			// rather than each finding restating it. A rule that emits a
+			// different rule's ID is a bug, not a feature: it would report
+			// under an ID whose severity, documentation, and fixability
+			// describe something else.
+			if f.RuleID != "" && f.RuleID != r.ID {
+				panic(fmt.Sprintf("rules: %s emitted a finding for %s", r.ID, f.RuleID))
+			}
+			f.RuleID = r.ID
+
 			// Apply configuration here rather than trusting each rule to
 			// remember. A rule that built its Finding with a literal severity
 			// used to ignore .quaddoc.toml silently, which let a project raise
