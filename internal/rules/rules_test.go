@@ -314,3 +314,15 @@ func TestSELinuxDowngradeLadder(t *testing.T) {
 		})
 	}
 }
+
+// buildUnits turns unit-file texts into units named a.container, b.container,
+// and so on, so multi-unit tests read compactly.
+func buildUnits(t *testing.T, texts []string) []*ir.Unit {
+	t.Helper()
+	units := make([]*ir.Unit, 0, len(texts))
+	for i, text := range texts {
+		name := string(rune('a'+i)) + ".container"
+		units = append(units, unitFromText(t, name, text))
+	}
+	return units
+}
