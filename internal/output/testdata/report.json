@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "findings": [
+    {
+      "rule": "QD022",
+      "severity": "error",
+      "confidence": "confirmed",
+      "unit": "units/web.container",
+      "message": "web has no [Install] section, so it will never start automatically",
+      "remediation": "Add an [Install] section:\n\n    [Install]\n    WantedBy=default.target"
+    },
+    {
+      "rule": "QD001",
+      "severity": "warning",
+      "confidence": "possible",
+      "unit": "units/web.container",
+      "line": 4,
+      "message": "bind mount /srv/site has no SELinux relabelling option",
+      "remediation": "Append :Z to the mount."
+    },
+    {
+      "rule": "QD021",
+      "severity": "note",
+      "confidence": "confirmed",
+      "unit": "units/db.container",
+      "line": 9,
+      "message": "restart policy unless-stopped has no exact systemd equivalent",
+      "remediation": "Use Restart=always with an [Install] section."
+    }
+  ],
+  "summary": {
+    "errors": 1,
+    "warnings": 1,
+    "notes": 1
+  }
+}

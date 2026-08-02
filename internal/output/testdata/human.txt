@@ -1,0 +1,14 @@
+units/db.container
+  note:9 QD021 restart policy unless-stopped has no exact systemd equivalent
+    Use Restart=always with an [Install] section.
+
+units/web.container
+  error QD022 web has no [Install] section, so it will never start automatically
+    Add an [Install] section:
+
+        [Install]
+        WantedBy=default.target
+  warning:4 QD001 bind mount /srv/site has no SELinux relabelling option (possible; run with --host-context to confirm)
+    Append :Z to the mount.
+
+Found 1 error, 1 warning, 1 note.

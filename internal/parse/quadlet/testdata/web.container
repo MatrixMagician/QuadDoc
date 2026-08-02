@@ -1,0 +1,25 @@
+# A realistic hand-written unit exercising the awkward parts of the format.
+; systemd accepts both comment markers, but only at the start of a line.
+
+[Unit]
+Description=Web front end
+After=network-online.target
+
+[Container]
+Image=docker.io/library/nginx:1.27
+# Repeated keys are a list, not a key overwritten four times.
+Volume=/srv/site:/usr/share/nginx/html:Z
+Volume=/srv/certs:/etc/nginx/certs:ro
+PublishPort=8080:80
+Environment=NGINX_HOST=example.invalid
+# A value may legitimately contain a '#'.
+Environment=MOTD=welcome # not a comment
+PodmanArgs=--label \
+  app=web \
+  tier=front
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target
