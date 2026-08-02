@@ -23,10 +23,12 @@ var version = "dev"
 const usage = `quaddoc - convert, lint, and diagnose Podman Quadlets
 
 Usage:
-  quaddoc convert <compose.yaml>   generate Quadlet units from a compose file
-  quaddoc lint <path...>       audit Quadlet units
-  quaddoc rules [QD###]        show the rule reference
-  quaddoc version              print the version
+  quaddoc convert <compose.yaml>      generate Quadlet units from a compose file
+  quaddoc lint <path...>              audit Quadlet units
+  quaddoc capture-context [--out dir] record this system's context for replay
+  quaddoc doctor                      report what quaddoc detects on this system
+  quaddoc rules [QD###]               show the rule reference
+  quaddoc version                     print the version
 
 Run 'quaddoc <command> -h' for the options of a command.
 `
@@ -42,6 +44,10 @@ func main() {
 		os.Exit(runConvert(os.Args[2:]))
 	case "lint":
 		os.Exit(runLint(os.Args[2:]))
+	case "capture-context":
+		os.Exit(runCapture(os.Args[2:]))
+	case "doctor":
+		os.Exit(runDoctor(os.Args[2:]))
 	case "rules":
 		os.Exit(runRules(os.Args[2:]))
 	case "version", "--version", "-v":
@@ -61,6 +67,8 @@ func runLint(args []string) int {
 	asJSON := fs.Bool("json", false, "emit findings as JSON")
 	verbose := fs.Bool("explain", false, "include each rule's rationale and citation")
 	disable := fs.String("disable", "", "comma-separated rule IDs to skip")
+	hostContext := fs.String("host-context", "",
+		`consult the host: "live" for this system, or a directory captured by capture-context`)
 
 	paths, err := parseArgs(fs, args)
 	if err != nil {
@@ -100,7 +108,13 @@ func runLint(args []string) int {
 		return 2
 	}
 
-	engine := &rules.Engine{Config: config, Host: hostctx.Unknown{}}
+	host, err := resolveHostContext(*hostContext)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "quaddoc: %v\n", err)
+		return 2
+	}
+
+	engine := &rules.Engine{Config: config, Host: host}
 	findings := engine.Run(project)
 
 	if *asJSON {
@@ -257,4 +271,94 @@ func runRules(args []string) int {
 		fmt.Printf("%s  %-8s %s\n", r.ID, r.DefaultSeverity, r.Summary)
 	}
 	return 0
+}
+
+// resolveHostContext turns the --host-context flag into a context.
+//
+// The default is to know nothing, so that findings are hedged unless the user
+// asked quaddoc to look at their system. Reading the host should be a choice,
+// not something that happens because a rule felt like it.
+func resolveHostContext(flag string) (hostctx.Context, error) {
+	switch flag {
+	case "":
+		return hostctx.Unknown{}, nil
+	case "live":
+		return hostctx.NewLive(), nil
+	default:
+		info, err := os.Stat(flag)
+		if err != nil {
+			return nil, fmt.Errorf("reading captured context %s: %w", flag, err)
+		}
+		if !info.IsDir() {
+			return nil, fmt.Errorf("captured context %s is not a directory", flag)
+		}
+		return hostctx.NewReplay(flag), nil
+	}
+}
+
+func runCapture(args []string) int {
+	fs := flag.NewFlagSet("capture-context", flag.ExitOnError)
+	out := fs.String("out", "quaddoc-context", "directory to write the context into")
+
+	if _, err := parseArgs(fs, args); err != nil {
+		return 2
+	}
+
+	if err := hostctx.Capture(*out); err != nil {
+		fmt.Fprintf(os.Stderr, "quaddoc: %v\n", err)
+		return 2
+	}
+
+	fmt.Fprintf(os.Stderr, "Captured this system's context to %s\n\n", *out)
+	fmt.Fprintf(os.Stderr, "Lint against it from anywhere with:\n\n    quaddoc lint --host-context=%s <units>\n", *out)
+	return 0
+}
+
+func runDoctor(args []string) int {
+	fs := flag.NewFlagSet("doctor", flag.ExitOnError)
+	hostContext := fs.String("host-context", "live", `"live" or a captured directory`)
+
+	if _, err := parseArgs(fs, args); err != nil {
+		return 2
+	}
+
+	host, err := resolveHostContext(*hostContext)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "quaddoc: %v\n", err)
+		return 2
+	}
+
+	fmt.Println("quaddoc", version)
+	fmt.Println()
+	for _, line := range hostctx.Describe(host) {
+		fmt.Println(line)
+	}
+
+	fmt.Println()
+	if path := findQuadletGenerator(); path != "" {
+		fmt.Println("Quadlet generator:", path)
+	} else {
+		fmt.Println("Quadlet generator: not found (conversion still works; " +
+			"only the generator cross-check is unavailable)")
+	}
+
+	fmt.Println()
+	fmt.Printf("Rules registered: %d\n", len(rules.All()))
+	return 0
+}
+
+// findQuadletGenerator locates the Quadlet generator, which is not on PATH.
+// Its absence is reported rather than treated as an error: quaddoc does not
+// depend on podman being installed.
+func findQuadletGenerator() string {
+	for _, path := range []string{
+		"/usr/libexec/podman/quadlet",
+		"/usr/lib/podman/quadlet",
+		"/usr/local/libexec/podman/quadlet",
+	} {
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			return path
+		}
+	}
+	return ""
 }
