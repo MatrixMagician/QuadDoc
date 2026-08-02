@@ -48,6 +48,35 @@ changelog:
 
 release:
   footer: |
+    ## Install
+
+    Download the archive for your architecture, verify it, and put the binary
+    on your path:
+
+    ```sh
+    VERSION={{ .Version }}
+    ARCH=$(uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/')
+    BASE=https://github.com/MatrixMagician/QuadDoc/releases/download/v${VERSION}
+
+    curl -fsSLO ${BASE}/quaddoc_${VERSION}_linux_${ARCH}.tar.gz
+    curl -fsSLO ${BASE}/checksums.txt
+    sha256sum --check --ignore-missing checksums.txt
+
+    tar xzf quaddoc_${VERSION}_linux_${ARCH}.tar.gz quaddoc
+    install -m755 quaddoc ~/.local/bin/quaddoc
+    ```
+
+    The binaries are statically linked with CGO disabled, so they run on any
+    Linux distribution regardless of its libc. Nothing is required at runtime,
+    not even podman: host-context checks read files and degrade gracefully when
+    they are absent.
+
+    Verify the install with:
+
+    ```sh
+    quaddoc doctor
+    ```
+
     ## Verifying the units it generates
 
     QuadDoc's generated units are checked against Podman's own Quadlet

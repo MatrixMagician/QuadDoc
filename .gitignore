@@ -33,3 +33,6 @@ go.work.sum
 
 # The built binary
 /quaddoc
+
+# goreleaser output
+dist/

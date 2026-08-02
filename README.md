@@ -114,11 +114,34 @@ transformations.
 
 ## Install
 
+Download a static binary from the
+[releases page](https://github.com/MatrixMagician/QuadDoc/releases), or:
+
+```sh
+VERSION=0.1.0
+ARCH=$(uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/')
+BASE=https://github.com/MatrixMagician/QuadDoc/releases/download/v${VERSION}
+
+curl -fsSLO ${BASE}/quaddoc_${VERSION}_linux_${ARCH}.tar.gz
+curl -fsSLO ${BASE}/checksums.txt
+sha256sum --check --ignore-missing checksums.txt
+
+tar xzf quaddoc_${VERSION}_linux_${ARCH}.tar.gz quaddoc
+install -m755 quaddoc ~/.local/bin/quaddoc
+```
+
+The binaries are statically linked with CGO disabled, so they run on any Linux
+distribution regardless of its libc. Nothing is needed at runtime, not even
+podman.
+
+From source, if you have Go:
+
 ```sh
 go install github.com/MatrixMagician/quaddoc/cmd/quaddoc@latest
 ```
 
-Or download a static binary from the [releases page](https://github.com/MatrixMagician/QuadDoc/releases).
+Either way, check the install with `quaddoc doctor`, which reports what it
+detected about your system and how many rules it is carrying.
 
 ## Usage
 
