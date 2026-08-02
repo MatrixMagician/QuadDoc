@@ -137,3 +137,24 @@ func checkQD023(c *Context) []Finding {
 	}
 	return findings
 }
+
+// QD000 reports a suppression directive that gave no reason.
+//
+// It is registered like any other rule so that it appears in the reference and
+// can itself be configured, though disabling it rather defeats the purpose.
+func init() {
+	Register(&Rule{
+		ID:      "QD000",
+		Summary: "Suppression directive gives no reason",
+		Rationale: "A `# quaddoc: disable=` comment without a reason is indistinguishable " +
+			"from a bug someone gave up on. The cost is paid later, by whoever finds it " +
+			"and cannot tell whether the justification still holds, so quaddoc ignores " +
+			"a directive with no reason and says so.",
+		Citation: "A project convention rather than an external one; see CLAUDE.md and " +
+			"SPEC.md section 5, which requires the reason.",
+		DefaultSeverity: Warning,
+		// Raised by the configuration layer, which has the file text, rather
+		// than by walking the IR.
+		Check: func(*Context) []Finding { return nil },
+	})
+}

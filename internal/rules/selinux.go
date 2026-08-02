@@ -202,6 +202,10 @@ func checkQD001(c *Context) []Finding {
 				Remediation: fmt.Sprintf("Add :%s to the mount, %s:\n\n    Volume=%s\n\n"+
 					"Run `quaddoc fix --rule QD001` to apply this.",
 					option, explanation, withOption(m, option)),
+				// The option was chosen using the project-wide sharing map.
+				// Handing it to the fix engine structurally is what stops the
+				// fix writing a :Z that QD002 would then flag.
+				Fix: map[string]string{"option": option},
 			})
 		}
 	}

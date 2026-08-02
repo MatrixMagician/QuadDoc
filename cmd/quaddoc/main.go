@@ -7,8 +7,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
+	"github.com/MatrixMagician/quaddoc/internal/config"
+	"github.com/MatrixMagician/quaddoc/internal/fix"
 	"github.com/MatrixMagician/quaddoc/internal/generate"
 	"github.com/MatrixMagician/quaddoc/internal/hostctx"
 	"github.com/MatrixMagician/quaddoc/internal/ir"
@@ -25,6 +28,7 @@ const usage = `quaddoc - convert, lint, and diagnose Podman Quadlets
 Usage:
   quaddoc convert <compose.yaml>      generate Quadlet units from a compose file
   quaddoc lint <path...>              audit Quadlet units
+  quaddoc fix <path...>               apply safe remediations (diff preview by default)
   quaddoc capture-context [--out dir] record this system's context for replay
   quaddoc doctor                      report what quaddoc detects on this system
   quaddoc rules [QD###]               show the rule reference
@@ -44,6 +48,8 @@ func main() {
 		os.Exit(runConvert(os.Args[2:]))
 	case "lint":
 		os.Exit(runLint(os.Args[2:]))
+	case "fix":
+		os.Exit(runFix(os.Args[2:]))
 	case "capture-context":
 		os.Exit(runCapture(os.Args[2:]))
 	case "doctor":
@@ -79,32 +85,21 @@ func runLint(args []string) int {
 		return 2
 	}
 
-	config := rules.Config{Disabled: map[string]bool{}}
+	projectConfig, err := config.Load(paths[0])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "quaddoc: %v\n", err)
+		return 2
+	}
+	ruleConfig := projectConfig.RuleConfig()
 	for _, id := range strings.Split(*disable, ",") {
 		if id = strings.ToUpper(strings.TrimSpace(id)); id != "" {
-			config.Disabled[id] = true
+			ruleConfig.Disabled[id] = true
 		}
 	}
 
-	// Load every path into one project. Rules reason across the whole set, so
-	// linting two directories together is meaningfully different from linting
-	// each alone, and the user chose to name them together.
-	project := &ir.Project{}
-	for _, path := range paths {
-		p, err := ir.LoadProject(path)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "quaddoc: %v\n", err)
-			return 2
-		}
-		if project.Root == "" {
-			project.Root = p.Root
-		}
-		project.Units = append(project.Units, p.Units...)
-	}
-	project.Sort()
-
-	if len(project.Units) == 0 {
-		fmt.Fprintf(os.Stderr, "quaddoc: no Quadlet units found in %s\n", strings.Join(paths, ", "))
+	project, err := loadProject(paths)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "quaddoc: %v\n", err)
 		return 2
 	}
 
@@ -114,8 +109,8 @@ func runLint(args []string) int {
 		return 2
 	}
 
-	engine := &rules.Engine{Config: config, Host: host}
-	findings := engine.Run(project)
+	engine := &rules.Engine{Config: ruleConfig, Host: host}
+	findings := config.ApplySuppressions(engine.Run(project), suppressions(project))
 
 	if *asJSON {
 		if err := output.JSON(os.Stdout, findings); err != nil {
@@ -361,4 +356,145 @@ func findQuadletGenerator() string {
 		}
 	}
 	return ""
+}
+
+func runFix(args []string) int {
+	fs := flag.NewFlagSet("fix", flag.ExitOnError)
+	write := fs.Bool("write", false, "apply the changes instead of previewing them")
+	only := fs.String("rule", "", "comma-separated rule IDs to fix; default is every fixable rule")
+	hostContext := fs.String("host-context", "",
+		`consult the host: "live" for this system, or a directory captured by capture-context`)
+
+	paths, err := parseArgs(fs, args)
+	if err != nil {
+		return 2
+	}
+	if len(paths) == 0 {
+		fmt.Fprintln(os.Stderr, "quaddoc fix: no paths given")
+		return 2
+	}
+
+	project, err := loadProject(paths)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "quaddoc: %v\n", err)
+		return 2
+	}
+
+	host, err := resolveHostContext(*hostContext)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "quaddoc: %v\n", err)
+		return 2
+	}
+
+	engine := &rules.Engine{Host: host}
+	findings := engine.Run(project)
+
+	opts := fix.Options{Only: map[string]bool{}}
+	for _, id := range strings.Split(*only, ",") {
+		if id = strings.ToUpper(strings.TrimSpace(id)); id != "" {
+			opts.Only[id] = true
+		}
+	}
+
+	result, err := fix.Apply(project, findings, opts)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "quaddoc: %v\n", err)
+		return 2
+	}
+
+	if len(result.Changes) == 0 {
+		fmt.Println("Nothing to fix.")
+		reportUnfixed(result.Unfixed)
+		return 0
+	}
+
+	if !*write {
+		for _, change := range result.Changes {
+			fmt.Print(fix.Diff(change))
+			fmt.Println()
+		}
+		fmt.Fprintf(os.Stderr, "%d file(s) would change. Re-run with --write to apply.\n",
+			len(result.Changes))
+		reportUnfixed(result.Unfixed)
+		return 0
+	}
+
+	if err := fix.Write(result); err != nil {
+		fmt.Fprintf(os.Stderr, "quaddoc: %v\n", err)
+		return 2
+	}
+	for _, change := range result.Changes {
+		verb := "updated"
+		if change.Created {
+			verb = "created"
+		}
+		fmt.Printf("%s %s (%s)\n", verb, change.Path, strings.Join(change.Rules, ", "))
+	}
+	reportUnfixed(result.Unfixed)
+	return 0
+}
+
+// reportUnfixed tells the user what is left, so a clean fix run is not mistaken
+// for a clean lint.
+func reportUnfixed(unfixed []rules.Finding) {
+	if len(unfixed) == 0 {
+		return
+	}
+
+	byRule := map[string]int{}
+	for _, f := range unfixed {
+		byRule[f.RuleID]++
+	}
+	ids := make([]string, 0, len(byRule))
+	for id := range byRule {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+
+	fmt.Fprintf(os.Stderr, "\n%d finding(s) have no mechanical fix and need a decision from you:\n",
+		len(unfixed))
+	for _, id := range ids {
+		summary := id
+		if r, ok := rules.Lookup(id); ok {
+			summary = id + " " + r.Summary
+		}
+		fmt.Fprintf(os.Stderr, "  %s (%d)\n", summary, byRule[id])
+	}
+	fmt.Fprintln(os.Stderr, "\nRun `quaddoc lint` to see them in full.")
+}
+
+// loadProject reads every named path into one project. Rules reason across the
+// whole set, so paths named together are linted together.
+func loadProject(paths []string) (*ir.Project, error) {
+	project := &ir.Project{}
+	for _, path := range paths {
+		p, err := ir.LoadProject(path)
+		if err != nil {
+			return nil, err
+		}
+		if project.Root == "" {
+			project.Root = p.Root
+		}
+		project.Units = append(project.Units, p.Units...)
+	}
+	project.Sort()
+
+	if len(project.Units) == 0 {
+		return nil, fmt.Errorf("no Quadlet units found in %s", strings.Join(paths, ", "))
+	}
+	return project, nil
+}
+
+// suppressions gathers inline directives from every unit in a project.
+func suppressions(project *ir.Project) map[string][]config.Suppression {
+	out := map[string][]config.Suppression{}
+	for _, u := range project.Units {
+		if u.Source == nil {
+			continue
+		}
+		if found := config.ParseSuppressions(u.Path, u.Source.Render()); len(found) > 0 {
+			out[u.Path] = found
+		}
+	}
+	return out
 }

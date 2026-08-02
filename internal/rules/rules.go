@@ -84,6 +84,11 @@ type Finding struct {
 	// Remediation is copy-pasteable, or an explicit statement that no
 	// mechanical fix exists and what decision the user must make instead.
 	Remediation string `json:"remediation"`
+
+	// Fix carries the structured detail the fix engine needs, so that it
+	// applies exactly what the rule decided rather than re-deriving it from
+	// the prose. Empty for findings with no mechanical fix.
+	Fix map[string]string `json:"-"`
 }
 
 // Rule is one check over a project.
