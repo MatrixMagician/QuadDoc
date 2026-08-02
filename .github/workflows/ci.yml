@@ -49,6 +49,16 @@ jobs:
           fi
           go test -run 'Generator' -v ./internal/generate/ ./internal/fix/
 
+      # A rule's citation is its licence to exist. If a quote drifts from the
+      # manual page it names, the rule is folklore wearing a reference.
+      - name: Verify rule citations against the manual pages
+        run: |
+          if man podman-systemd.unit >/dev/null 2>&1; then
+            python3 scripts/check-citations.py
+          else
+            echo "::warning::podman-docs not installed; skipping citation verification"
+          fi
+
       - name: Check the rule reference is up to date
         run: |
           go run ./cmd/quaddoc rules --markdown > /tmp/rules.md

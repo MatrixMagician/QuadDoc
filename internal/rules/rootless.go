@@ -35,9 +35,9 @@ func init() {
 			"joins the wrong group. Neither is what the author meant by naming a host " +
 			"group.",
 		Citation: "podman-systemd.unit(5), GroupAdd=: \"Also supports the keep-groups " +
-			"special flag.\" podman-run(1), --group-add: \"keep-groups is a special flag " +
-			"that tells Podman to keep the supplementary group access ... Currently only " +
-			"available with the crun OCI runtime.\"",
+			"special flag.\" podman-run(1), --group-add, documents keep-groups as passing " +
+			"the invoking user's supplementary group access into the container, and notes " +
+			"it is \"Currently only available with the crun OCI runtime\".",
 		DefaultSeverity: Error,
 		Check:           checkQD011,
 	})

@@ -45,7 +45,7 @@ A `# quaddoc: disable=` comment without a reason is indistinguishable from a bug
 
 A bind-mounted host directory keeps whatever label it already had. Container processes run confined and are denied access to labels outside their type, so the mount appears as permission denied inside the container even though the Unix permissions look right. The :z and :Z options relabel the source to container_file_t.
 
-*Source: podman-run(1), --volume: "The :Z option tells Podman to label the content with a private unshared label", ":z" for shared content. Reproduced on Podman 5.8.4 with SELinux enforcing: a source labelled user_tmp_t was denied; after :Z it became container_file_t:s0:c235,c710 and the write succeeded.*
+*Source: podman-run(1), --volume: "The Z option tells Podman to label the content with a private unshared label." The z option is the shared equivalent. Reproduced on Podman 5.8.4 with SELinux enforcing: a source labelled user_tmp_t was denied; after :Z it became container_file_t:s0:c235,c710 and the write succeeded.*
 
 ## QD002
 
@@ -77,7 +77,7 @@ Network and FUSE filesystems do not store SELinux labels per file. Relabelling t
 
 Relabelling is recursive. Pointing it at a system directory rewrites the labels of files that confined services on the host depend on, and those services then fail. The damage outlives the container and is not undone by removing it: it takes a restorecon over the affected tree.
 
-*Source: podman-run(1), --volume: "Note: Do not relabel system files and directories. Relabeling system content might cause other confined services on your machine to fail."*
+*Source: podman-run(1), --volume: "Note: Do not relabel system files and directories. Relabeling system content might cause other confined services on the machine to fail."*
 
 ## QD010
 
@@ -97,7 +97,7 @@ Rootless Podman maps container UIDs through the user's subordinate range, so UID
 
 GroupAdd= resolves names against the container's /etc/group, not the host's. A host group name either does not exist in the image, so the unit fails to start, or exists with a different GID, so the container silently joins the wrong group. Neither is what the author meant by naming a host group.
 
-*Source: podman-systemd.unit(5), GroupAdd=: "Also supports the keep-groups special flag." podman-run(1), --group-add: "keep-groups is a special flag that tells Podman to keep the supplementary group access ... Currently only available with the crun OCI runtime."*
+*Source: podman-systemd.unit(5), GroupAdd=: "Also supports the keep-groups special flag." podman-run(1), --group-add, documents keep-groups as passing the invoking user's supplementary group access into the container, and notes it is "Currently only available with the crun OCI runtime".*
 
 ## QD012
 
@@ -138,7 +138,7 @@ systemd's After= orders one unit after another has *started*, which for a contai
 
 compose's `unless-stopped` is not a systemd restart policy. systemd does not reject it: it logs a parse failure and carries on with no restart policy at all, so the container silently never restarts. The honest translation is Restart=always with an [Install] section, since systemd separates the restart policy from enablement.
 
-*Source: systemd.service(5), Restart= lists the accepted values, which do not include unless-stopped. Verified with systemd-analyze verify on the generated service: "Failed to parse Restart=unless-stopped, ignoring: Invalid argument".*
+*Source: systemd.service(5), Restart= lists the accepted values, which do not include unless-stopped. Observed behaviour: running systemd-analyze verify over the generated service reports a parse failure for Restart=unless-stopped and continues, leaving the unit with no restart policy.*
 
 ## QD022
 
@@ -149,7 +149,7 @@ compose's `unless-stopped` is not a systemd restart policy. systemd does not rej
 
 Quadlet services are transient, so they cannot be enabled with systemctl. The generator applies the [Install] section at generation time instead. Without one the unit starts only when started by hand.
 
-*Source: podman-systemd.unit(5), "Enabling unit files": services created by Podman are transient, "it is not possible to systemctl enable them in order for them to become automatically enabled on the next boot". The generator "manually applies the [Install] section ... in the same way systemctl enable does".*
+*Source: podman-systemd.unit(5), "Enabling unit files": services created by Podman are transient, so "it is not possible to systemctl enable them in order for them to become automatically enabled on the next boot". Instead the generator "manually applies the [Install] section of the container definition unit files during generation, in the same way systemctl enable does when run later".*
 
 ## QD023
 
@@ -212,7 +212,7 @@ Auto-update has to know which image to check, which it cannot do from a short na
 
 A unit file is world-readable in the Quadlet search path and is usually committed to version control, so a credential in Environment= is exposed twice over. Podman secrets keep the value out of the unit and out of the container's environment listing.
 
-*Source: podman-systemd.unit(5), Secret=: "Use a Podman secret in the container either as a file or an environment variable." Equivalent to podman-run(1) --secret.*
+*Source: podman-systemd.unit(5), Secret=: "Use a Podman secret in the container either as a file or an environment variable." It is the Quadlet spelling of podman-run(1)'s --secret.*
 
 ## QD042
 

@@ -25,8 +25,9 @@ func init() {
 			"their type, so the mount appears as permission denied inside the container " +
 			"even though the Unix permissions look right. The :z and :Z options relabel " +
 			"the source to container_file_t.",
-		Citation: "podman-run(1), --volume: \"The :Z option tells Podman to label the " +
-			"content with a private unshared label\", \":z\" for shared content. " +
+		Citation: "podman-run(1), --volume: \"The Z option tells Podman to label the " +
+			"content with a private unshared label.\" The z option is the shared " +
+			"equivalent. " +
 			"Reproduced on Podman 5.8.4 with SELinux enforcing: a source labelled " +
 			"user_tmp_t was denied; after :Z it became " +
 			"container_file_t:s0:c235,c710 and the write succeeded.",
@@ -77,7 +78,7 @@ func init() {
 			"removing it: it takes a restorecon over the affected tree.",
 		Citation: "podman-run(1), --volume: \"Note: Do not relabel system files and " +
 			"directories. Relabeling system content might cause other confined services " +
-			"on your machine to fail.\"",
+			"on the machine to fail.\"",
 		DefaultSeverity: Error,
 		Check:           checkQD004,
 	})

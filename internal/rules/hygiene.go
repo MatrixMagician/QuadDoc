@@ -32,8 +32,8 @@ func init() {
 			"exposed twice over. Podman secrets keep the value out of the unit and out " +
 			"of the container's environment listing.",
 		Citation: "podman-systemd.unit(5), Secret=: \"Use a Podman secret in the container " +
-			"either as a file or an environment variable.\" Equivalent to podman-run(1) " +
-			"--secret.",
+			"either as a file or an environment variable.\" It is the Quadlet spelling of " +
+			"podman-run(1)'s --secret.",
 		DefaultSeverity: Warning,
 		Check:           checkQD041,
 	})

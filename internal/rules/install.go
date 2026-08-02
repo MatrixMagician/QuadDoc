@@ -25,10 +25,11 @@ func init() {
 			"systemctl. The generator applies the [Install] section at generation " +
 			"time instead. Without one the unit starts only when started by hand.",
 		Citation: "podman-systemd.unit(5), \"Enabling unit files\": services created by " +
-			"Podman are transient, \"it is not possible to systemctl enable them in " +
-			"order for them to become automatically enabled on the next boot\". The " +
-			"generator \"manually applies the [Install] section ... in the same way " +
-			"systemctl enable does\".",
+			"Podman are transient, so \"it is not possible to systemctl enable them in " +
+			"order for them to become automatically enabled on the next boot\". Instead " +
+			"the generator \"manually applies the [Install] section of the container " +
+			"definition unit files during generation, in the same way systemctl enable " +
+			"does when run later\".",
 		DefaultSeverity: Error,
 		Fixable:         true,
 		Check:           checkQD022,

@@ -81,9 +81,10 @@ func init() {
 			"translation is Restart=always with an [Install] section, since systemd " +
 			"separates the restart policy from enablement.",
 		Citation: "systemd.service(5), Restart= lists the accepted values, which do not " +
-			"include unless-stopped. Verified with systemd-analyze verify on the " +
-			"generated service: \"Failed to parse Restart=unless-stopped, ignoring: " +
-			"Invalid argument\".",
+			"include unless-stopped. Observed behaviour: running systemd-analyze verify " +
+			"over the generated service reports a parse failure for " +
+			"Restart=unless-stopped and continues, leaving the unit with no restart " +
+			"policy.",
 		DefaultSeverity: Error,
 		Check:           checkQD021,
 	})
