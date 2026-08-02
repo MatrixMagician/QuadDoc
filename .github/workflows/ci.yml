@@ -76,14 +76,44 @@ jobs:
             exit 1
           fi
 
-      - name: Lint this project's own fixtures
+      # Exercise the whole user journey, asserting the exit codes rather than
+      # swallowing them. The fixture deliberately contains problems, so
+      # convert reports translation notes (1) and lint reports errors (2);
+      # after fixing, only judgement-call warnings remain (1). Checking the
+      # codes is the point, since they are what CI users gate on.
+      - name: Run the documented journey end to end
         run: |
           go build -o /tmp/quaddoc ./cmd/quaddoc
-          /tmp/quaddoc convert testdata/fixtures/webstack/compose.yaml --out /tmp/units
-          # The fixture deliberately contains problems, so a non-zero exit is
-          # expected; what matters is that the tool runs end to end.
-          /tmp/quaddoc lint /tmp/units || true
-          /tmp/quaddoc doctor
+
+          run_expecting() {
+            local expected="$1"; shift
+            set +e
+            "$@" >/dev/null 2>&1
+            local actual=$?
+            set -e
+            if [ "$actual" -ne "$expected" ]; then
+              echo "::error::$* exited $actual, expected $expected"
+              return 1
+            fi
+            echo "ok: $* exited $expected"
+          }
+
+          run_expecting 1 /tmp/quaddoc convert testdata/fixtures/webstack/compose.yaml --out /tmp/units
+          run_expecting 2 /tmp/quaddoc lint /tmp/units
+          run_expecting 0 /tmp/quaddoc fix /tmp/units --write
+          run_expecting 1 /tmp/quaddoc lint /tmp/units
+          run_expecting 0 /tmp/quaddoc doctor
+          run_expecting 0 /tmp/quaddoc rules
+
+          # Fixing must be idempotent: a second run changes nothing.
+          before=$(sha256sum /tmp/units/* | sha256sum)
+          run_expecting 0 /tmp/quaddoc fix /tmp/units --write
+          after=$(sha256sum /tmp/units/* | sha256sum)
+          if [ "$before" != "$after" ]; then
+            echo "::error::fix is not idempotent"
+            exit 1
+          fi
+          echo "ok: fix is idempotent"
 
   build:
     runs-on: ubuntu-latest
