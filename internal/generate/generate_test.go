@@ -1,8 +1,8 @@
 package generate
 
 import (
+	"github.com/MatrixMagician/quaddoc/internal/podmantest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -52,7 +52,7 @@ func TestConvertEmitsAUnitPerService(t *testing.T) {
 // exist; the real entry point is the generator binary with QUADLET_UNIT_DIRS.
 // See docs/spec-review.md finding F2.
 func TestGeneratedUnitsPassTheRealGenerator(t *testing.T) {
-	generator := quadletGenerator(t)
+	generator := podmantest.Generator(t)
 
 	dir := t.TempDir()
 	for name, content := range convertFixture(t, Options{Annotate: true}) {
@@ -61,26 +61,7 @@ func TestGeneratedUnitsPassTheRealGenerator(t *testing.T) {
 		}
 	}
 
-	cmd := exec.Command(generator, "-dryrun", "-user")
-	cmd.Env = append(os.Environ(), "QUADLET_UNIT_DIRS="+dir)
-	out, err := cmd.CombinedOutput()
-
-	if err != nil {
-		t.Fatalf("the Quadlet generator rejected the generated units: %v\n%s", err, out)
-	}
-	// The generator reports problems on stderr while still exiting 0 for
-	// warnings, so the output is checked too.
-	for _, line := range strings.Split(string(out), "\n") {
-		if strings.Contains(strings.ToLower(line), "warning:") ||
-			strings.Contains(strings.ToLower(line), "error") {
-			t.Errorf("generator complained: %s", line)
-		}
-	}
-
-	// Every unit should have produced a service.
-	if got := strings.Count(string(out), "---"); got < 6 {
-		t.Errorf("generator produced %d service blocks, want at least 6\n%s", got, out)
-	}
+	podmantest.AssertAccepts(t, generator, dir)
 }
 
 func TestNamedVolumesReferenceTheVolumeUnit(t *testing.T) {
@@ -233,7 +214,7 @@ func TestPodModeEmitsAPod(t *testing.T) {
 }
 
 func TestPodModeAlsoPassesTheRealGenerator(t *testing.T) {
-	generator := quadletGenerator(t)
+	generator := podmantest.Generator(t)
 
 	dir := t.TempDir()
 	for name, content := range convertFixture(t, Options{Annotate: true, Pod: true}) {
@@ -242,11 +223,7 @@ func TestPodModeAlsoPassesTheRealGenerator(t *testing.T) {
 		}
 	}
 
-	cmd := exec.Command(generator, "-dryrun", "-user")
-	cmd.Env = append(os.Environ(), "QUADLET_UNIT_DIRS="+dir)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("the generator rejected the pod units: %v\n%s", err, out)
-	}
+	podmantest.AssertAccepts(t, generator, dir)
 }
 
 func TestUnsupportedKeysBecomeNotes(t *testing.T) {

@@ -7,8 +7,8 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/MatrixMagician/quaddoc/internal/podmantest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -542,7 +542,7 @@ func TestRulesMarkdownIsGenerated(t *testing.T) {
 // against Podman's own generator, which is the only authority on whether a
 // unit is valid.
 func TestConvertedThenFixedUnitsPassTheRealGenerator(t *testing.T) {
-	generator := quadletGenerator(t)
+	generator := podmantest.Generator(t)
 
 	bin := buildCLI(t)
 	dir, compose := writeCompose(t, fixtureCompose)
@@ -551,20 +551,10 @@ func TestConvertedThenFixedUnitsPassTheRealGenerator(t *testing.T) {
 	if _, stderr, code := run(t, bin, "convert", compose, "--out", out); code > 1 {
 		t.Fatalf("convert exit = %d\nstderr: %s", code, stderr)
 	}
-	assertGeneratorAccepts(t, generator, out)
+	podmantest.AssertAccepts(t, generator, out)
 
 	if _, stderr, code := run(t, bin, "fix", out, "--write"); code != 0 {
 		t.Fatalf("fix exit = %d\nstderr: %s", code, stderr)
 	}
-	assertGeneratorAccepts(t, generator, out)
-}
-
-func assertGeneratorAccepts(t *testing.T, generator, dir string) {
-	t.Helper()
-
-	cmd := exec.Command(generator, "-dryrun", "-user")
-	cmd.Env = append(os.Environ(), "QUADLET_UNIT_DIRS="+dir)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("the generator rejected the units in %s: %v\n%s", dir, err, out)
-	}
+	podmantest.AssertAccepts(t, generator, out)
 }

@@ -1,8 +1,8 @@
 package fix
 
 import (
+	"github.com/MatrixMagician/quaddoc/internal/podmantest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -184,7 +184,7 @@ PodmanArgs=--label \
 // TestFixedUnitsStillPassTheGenerator is the check that matters most: a fix
 // that produced a file Podman rejects would be worse than no fix at all.
 func TestFixedUnitsStillPassTheGenerator(t *testing.T) {
-	generator := quadletGenerator(t)
+	generator := podmantest.Generator(t)
 
 	dir, _ := writeUnits(t, map[string]string{
 		"a.container": "[Container]\nImage=docker.io/library/nginx:1.27\nVolume=/srv/s:/data\n",
@@ -192,11 +192,7 @@ func TestFixedUnitsStillPassTheGenerator(t *testing.T) {
 	})
 	fixOnce(t, dir, Options{})
 
-	cmd := exec.Command(generator, "-dryrun", "-user")
-	cmd.Env = append(os.Environ(), "QUADLET_UNIT_DIRS="+dir)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("the generator rejected the fixed units: %v\n%s", err, out)
-	}
+	podmantest.AssertAccepts(t, generator, dir)
 }
 
 // TestFixResolvesTheFindings closes the loop: after fixing, the rules that
