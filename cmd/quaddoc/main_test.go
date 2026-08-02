@@ -23,10 +23,15 @@ func buildCLI(t *testing.T) string {
 }
 
 // run executes the binary and returns stdout, stderr, and the exit code.
+//
+// The working directory is a throwaway one, so that a bug in flag handling
+// cannot scribble into the repository. A mutation that made `--out` fall back
+// to its default did exactly that before this was added.
 func run(t *testing.T, bin string, args ...string) (string, string, int) {
 	t.Helper()
 
 	cmd := exec.Command(bin, args...)
+	cmd.Dir = t.TempDir()
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

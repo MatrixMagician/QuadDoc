@@ -395,3 +395,142 @@ func findQuadletGenerator() string {
 	}
 	return ""
 }
+
+// TestFixQD001GuardsAgainstDoubleLabelling exercises the idempotence guard in
+// fixQD001 directly.
+//
+// End-to-end idempotence holds for a different reason: once a mount is
+// labelled, QD001 stops firing, so the fix is never reached a second time.
+// That makes the guard defence in depth, and defence in depth that no test
+// exercises is just untested code. This calls the fix with a finding that
+// points at an already-labelled line, which is what would happen if a rule
+// were ever loosened.
+func TestFixQD001GuardsAgainstDoubleLabelling(t *testing.T) {
+	tests := []struct {
+		name    string
+		line    string
+		option  string
+		wantHit bool
+	}{
+		{
+			name: "an unlabelled mount is labelled",
+			line: "Volume=/srv/site:/data", option: "Z", wantHit: true,
+		},
+		{
+			name: "an already private-labelled mount is left alone",
+			line: "Volume=/srv/site:/data:Z", option: "Z", wantHit: false,
+		},
+		{
+			name: "an already shared-labelled mount is left alone",
+			line: "Volume=/srv/site:/data:z", option: "z", wantHit: false,
+		},
+		{
+			name: "a label alongside other options is still detected",
+			line: "Volume=/srv/site:/data:ro,Z", option: "Z", wantHit: false,
+		},
+		{
+			// Applying the opposite label would produce `:Z,z`, which is
+			// contradictory and would be Podman's problem, not ours.
+			name: "the opposite label is not added on top",
+			line: "Volume=/srv/site:/data:Z", option: "z", wantHit: false,
+		},
+		{
+			name: "a non-Volume line is never touched",
+			line: "Image=docker.io/library/nginx:1.27", option: "Z", wantHit: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lines := []string{"[Container]", tt.line}
+			finding := rules.Finding{
+				RuleID: "QD001", Line: 2,
+				Fix: map[string]string{"option": tt.option},
+			}
+
+			got, changed := fixQD001(lines, finding)
+			if changed != tt.wantHit {
+				t.Fatalf("changed = %v, want %v (line became %q)", changed, tt.wantHit, got[1])
+			}
+			if !tt.wantHit && got[1] != tt.line {
+				t.Errorf("an untouched line was modified: %q -> %q", tt.line, got[1])
+			}
+		})
+	}
+}
+
+// TestFixQD001IsIdempotentWhenCalledTwice applies the same finding twice
+// directly, which the end-to-end test cannot do because the rule stops firing.
+func TestFixQD001IsIdempotentWhenCalledTwice(t *testing.T) {
+	lines := []string{"[Container]", "Volume=/srv/site:/data"}
+	finding := rules.Finding{RuleID: "QD001", Line: 2, Fix: map[string]string{"option": "Z"}}
+
+	once, _ := fixQD001(lines, finding)
+	first := once[1]
+
+	twice, changed := fixQD001(once, finding)
+	if changed {
+		t.Error("the second application reported a change")
+	}
+	if twice[1] != first {
+		t.Errorf("applying twice differs from applying once: %q then %q", first, twice[1])
+	}
+}
+
+// TestFixQD022GuardsAgainstDuplicateInstall likewise exercises QD022's guard
+// directly, since the rule also stops firing after the first fix.
+func TestFixQD022GuardsAgainstDuplicateInstall(t *testing.T) {
+	withInstall := []string{"[Container]", "Image=nginx", "", "[Install]", "WantedBy=default.target"}
+
+	got, changed := fixQD022(withInstall)
+	if changed {
+		t.Errorf("a unit that already has [Install] was modified: %v", got)
+	}
+
+	// An empty [Install] should gain the key rather than a second section.
+	empty := []string{"[Container]", "Image=nginx", "", "[Install]"}
+	got, changed = fixQD022(empty)
+	if !changed {
+		t.Fatal("an empty [Install] should be filled in")
+	}
+	if count := countOccurrences(got, "[Install]"); count != 1 {
+		t.Errorf("expected one [Install] section, got %d: %v", count, got)
+	}
+
+	// Applying again must not add a second key.
+	again, changed := fixQD022(got)
+	if changed {
+		t.Errorf("the second application changed the file: %v", again)
+	}
+}
+
+// TestFixQD030GuardsAgainstDuplicateNetwork covers the third fixable rule.
+func TestFixQD030GuardsAgainstDuplicateNetwork(t *testing.T) {
+	lines := []string{"[Container]", "Image=nginx"}
+
+	once, changed := fixQD030(lines, "shared")
+	if !changed {
+		t.Fatal("the network key should have been added")
+	}
+	if count := countOccurrences(once, "Network=shared.network"); count != 1 {
+		t.Fatalf("expected one Network= key, got %d: %v", count, once)
+	}
+
+	twice, changed := fixQD030(once, "shared")
+	if changed {
+		t.Error("the second application reported a change")
+	}
+	if count := countOccurrences(twice, "Network=shared.network"); count != 1 {
+		t.Errorf("applying twice produced %d Network= keys: %v", count, twice)
+	}
+}
+
+func countOccurrences(lines []string, want string) int {
+	n := 0
+	for _, line := range lines {
+		if strings.TrimSpace(line) == want {
+			n++
+		}
+	}
+	return n
+}
