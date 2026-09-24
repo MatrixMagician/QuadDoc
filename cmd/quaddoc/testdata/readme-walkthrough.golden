@@ -1,0 +1,67 @@
+$ quaddoc convert compose.yaml --out units/
+# exit 1
+# stdout
+# stderr
+Wrote 4 units to units/
+warning: web.container: depends_on db used condition: service_healthy, which systemd ordering cannot express; see the comment in the generated unit
+note: web.container: compose used `restart: unless-stopped`, which systemd cannot express exactly. Restart=always is the closest: systemd honours an explicit `systemctl stop` for as long as the machine stays up, and starts the unit again at boot because of the [Install] section.
+
+Run `quaddoc lint units/` to audit the result.
+
+$ quaddoc lint units/
+# exit 2
+# stdout
+units/db.container
+  warning:9 QD041 POSTGRES_PASSWORD= holds a literal credential in the unit file
+    Move the value into a Podman secret and reference it:
+
+        printf '%s' "$VALUE" | podman secret create postgres_password -
+
+    then in the unit:
+
+        Secret=postgres_password,type=env,target=POSTGRES_PASSWORD
+
+    and remove the Environment= line.
+  error:22 QD001 bind mount .../certs has no SELinux relabelling option, so on an enforcing system the container would be denied access (possible; run with --host-context to confirm)
+    Add :z to the mount, mounted by 2 units, so a shared label is required; a private :Z would let them overwrite each other's categories:
+
+        Volume=.../certs:/etc/postgresql/certs:ro,z
+
+    Run `quaddoc fix --rule QD001` to apply this.
+
+units/web.container
+  warning:11 QD020 web is ordered after db, but systemd ordering waits for the container to start, not to become ready
+    On db, make the service report started only once the container is healthy:
+
+        Notify=healthy
+
+    This requires a healthcheck on that container. It already has one, so this is a one-line change.
+  error:24 QD001 bind mount .../site has no SELinux relabelling option, so on an enforcing system the container would be denied access (possible; run with --host-context to confirm)
+    Add :Z to the mount, used only by this unit, so a private label is right:
+
+        Volume=.../site:/usr/share/nginx/html:ro,Z
+
+    Run `quaddoc fix --rule QD001` to apply this.
+  error:32 QD001 bind mount .../certs has no SELinux relabelling option, so on an enforcing system the container would be denied access (possible; run with --host-context to confirm)
+    Add :z to the mount, mounted by 2 units, so a shared label is required; a private :Z would let them overwrite each other's categories:
+
+        Volume=.../certs:/etc/nginx/certs:z
+
+    Run `quaddoc fix --rule QD001` to apply this.
+
+Found 3 errors, 2 warnings.
+# stderr
+
+$ quaddoc fix units/ --write
+# exit 0
+# stdout
+updated units/db.container (QD001)
+updated units/web.container (QD001)
+# stderr
+
+2 finding(s) have no mechanical fix and need a decision from you:
+  QD020 Ordering does not wait for a dependency to become healthy (1)
+  QD041 Credential passed as an environment value in the unit file (1)
+
+Run `quaddoc lint` to see them in full.
+

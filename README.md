@@ -63,7 +63,8 @@ note: web.container: compose used `restart: unless-stopped`, which systemd
 Run `quaddoc lint units/` to audit the result.
 ```
 
-Then audit it. Paths are shortened to `.../` here:
+Then audit it. Paths are shortened to `.../` here, and line numbers shift with
+the length of your project path, because the generated comments wrap it:
 
 ```console
 $ quaddoc lint units/
