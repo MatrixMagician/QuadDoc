@@ -3,6 +3,7 @@ package hostctx
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -207,6 +208,29 @@ func TestReplayOfAnEmptyDirectoryKnowsNothing(t *testing.T) {
 	}
 	if ranges, known := replay.SubUIDRanges(); known {
 		t.Errorf("an empty directory should not report subordinate ranges, got %+v", ranges)
+	}
+}
+
+func TestNoSubIDEntryIsKnownToBeNone(t *testing.T) {
+	// A readable /etc/subuid with no line for this user is the host saying
+	// "none", which is exactly when QD013 must speak. Reporting it as unknown
+	// silences the rule on the one host where it matters.
+	got := parseSubIDs(strings.NewReader("# comment\nbob:100000:65536\n"), []string{"alice", "1000"})
+	if got == nil || len(got) != 0 {
+		t.Errorf("parseSubIDs with no matching line = %#v, want a known, empty []IDRange{}", got)
+	}
+
+	// Capture must carry "known, none" across, rather than dropping the file
+	// and turning it back into "unknown".
+	src := t.TempDir()
+	writeFile(t, filepath.Join(src, "etc/subuid"), "# no ranges\n")
+	dst := t.TempDir()
+	if err := captureSubIDs(dst, "/etc/subuid", NewReplay(src)); err != nil {
+		t.Fatal(err)
+	}
+	ranges, known := NewReplay(dst).SubUIDRanges()
+	if !known || len(ranges) != 0 {
+		t.Errorf("replayed SubUIDRanges = %v/%v, want none/true", ranges, known)
 	}
 }
 

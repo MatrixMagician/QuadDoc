@@ -137,6 +137,11 @@ p='internal/hostctx/hostctx.go'; s=open(p).read()
 s=s.replace('if !found || len(m.MountPoint) >= len(best.MountPoint) {','if !found || len(m.MountPoint) > len(best.MountPoint) {')
 open(p,'w').write(s)"
 
+run_mutation "no subuid entry reads as unknown" "internal/hostctx/live.go" ./internal/hostctx "
+p='internal/hostctx/live.go'; s=open(p).read()
+s=s.replace('\tranges := []IDRange{}\n','\tvar ranges []IDRange\n')
+open(p,'w').write(s)"
+
 run_mutation "capture copies unit file contents" "internal/hostctx/live.go" ./internal/hostctx "
 p='internal/hostctx/live.go'; s=open(p).read()
 s=s.replace('os.WriteFile(filepath.Join(unitDir, name), nil, 0o644)','os.WriteFile(filepath.Join(unitDir, name), []byte(\"[Container]\\nEnvironment=SECRET=hunter2\\n\"), 0o644)')

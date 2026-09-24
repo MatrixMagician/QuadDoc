@@ -3,9 +3,11 @@ package hostctx
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"os/user"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -185,8 +187,9 @@ func (l *Live) SubGIDRanges() ([]IDRange, bool) {
 	return l.cache.subGID, l.cache.subGID != nil
 }
 
-// readSubIDs parses subuid(5) format: `name:start:count`, one per line, where
-// the name may be a user name or a UID.
+// readSubIDs reads the calling user's lines from a subuid(5) file. A file that
+// opens but has no line for the user yields an empty, non-nil slice: the host
+// has answered "none", which is not the same as not knowing.
 func (l *Live) readSubIDs(file string) []IDRange {
 	f, err := os.Open(l.path(file))
 	if err != nil {
@@ -194,17 +197,27 @@ func (l *Live) readSubIDs(file string) []IDRange {
 	}
 	defer f.Close()
 
-	// Match on both the name and the numeric UID, since either may appear.
-	var names []string
-	if u, err := user.Current(); err == nil {
-		names = append(names, u.Username, u.Uid)
-	}
 	// When replaying a captured context the current user is not the captured
 	// one, so a capture records only the relevant lines and we take them all.
-	takeAll := l.Root != ""
+	if l.Root != "" {
+		return parseSubIDs(f, nil)
+	}
 
-	var ranges []IDRange
-	sc := bufio.NewScanner(f)
+	// Match on both the name and the numeric UID, since either may appear.
+	// Without a user there is no telling which lines are ours.
+	u, err := user.Current()
+	if err != nil {
+		return nil
+	}
+	return parseSubIDs(f, []string{u.Username, u.Uid})
+}
+
+// parseSubIDs parses subuid(5) format, `name:start:count` one per line, where
+// the name may be a user name or a UID. It keeps the lines whose name is in
+// names, or every line when names is nil.
+func parseSubIDs(r io.Reader, names []string) []IDRange {
+	ranges := []IDRange{}
+	sc := bufio.NewScanner(r)
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
@@ -215,7 +228,7 @@ func (l *Live) readSubIDs(file string) []IDRange {
 		if len(parts) != 3 {
 			continue
 		}
-		if !takeAll && !contains(names, parts[0]) {
+		if names != nil && !slices.Contains(names, parts[0]) {
 			continue
 		}
 
@@ -227,15 +240,6 @@ func (l *Live) readSubIDs(file string) []IDRange {
 		ranges = append(ranges, IDRange{Start: start, Count: count})
 	}
 	return ranges
-}
-
-func contains(haystack []string, needle string) bool {
-	for _, s := range haystack {
-		if s == needle {
-			return true
-		}
-	}
-	return false
 }
 
 // UnprivilegedPortStart reads net.ipv4.ip_unprivileged_port_start from procfs
@@ -417,13 +421,14 @@ func copyInto(dir, file string) error {
 // captureSubIDs records only the calling user's subordinate ranges.
 func captureSubIDs(dir, file string, live *Live) error {
 	var ranges []IDRange
+	var known bool
 	switch file {
 	case "/etc/subuid":
-		ranges, _ = live.SubUIDRanges()
+		ranges, known = live.SubUIDRanges()
 	case "/etc/subgid":
-		ranges, _ = live.SubGIDRanges()
+		ranges, known = live.SubGIDRanges()
 	}
-	if ranges == nil {
+	if !known {
 		return nil
 	}
 
