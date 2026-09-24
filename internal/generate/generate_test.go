@@ -9,7 +9,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/MatrixMagician/quaddoc/internal/ir"
 	"github.com/MatrixMagician/quaddoc/internal/parse/compose"
+	"github.com/MatrixMagician/quaddoc/internal/parse/quadlet"
 	"github.com/MatrixMagician/quaddoc/internal/podmantest"
 )
 
@@ -257,9 +259,15 @@ services:
 	for _, n := range result.Notes {
 		if strings.Contains(n.Message, "build") {
 			sawBuild = true
+			if n.Unit != "app.container" {
+				t.Errorf("build note has Unit %q, want %q so the CLI can name the service", n.Unit, "app.container")
+			}
 		}
 		if strings.Contains(n.Message, "profiles") {
 			sawProfiles = true
+			if n.Unit != "app.container" {
+				t.Errorf("profiles note has Unit %q, want %q so the CLI can name the service", n.Unit, "app.container")
+			}
 		}
 	}
 	if !sawBuild {
@@ -280,7 +288,7 @@ func TestRenderRestart(t *testing.T) {
 		{policy: "no", want: "no"},
 		{policy: "always", want: "always"},
 		{policy: "on-failure", want: "on-failure"},
-		{policy: "on-failure:5", want: "on-failure"},
+		{policy: "on-failure:5", want: "on-failure", wantNote: true},
 		{policy: "unless-stopped", want: "always", wantNote: true},
 	}
 	for _, tt := range tests {
@@ -304,7 +312,6 @@ func TestHealthCommand(t *testing.T) {
 	}{
 		{name: "CMD form", test: []string{"CMD", "pg_isready", "-U", "postgres"}, want: `["CMD","pg_isready","-U","postgres"]`},
 		{name: "CMD-SHELL form", test: []string{"CMD-SHELL", "curl -f http://localhost/ || exit 1"}, want: "curl -f http://localhost/ || exit 1"},
-		{name: "NONE disables", test: []string{"NONE"}, want: ""},
 		{name: "empty", test: nil, want: ""},
 	}
 	for _, tt := range tests {
@@ -348,7 +355,7 @@ func convertTestdata(t *testing.T, fixture string) *Result {
 // so it doubles as generator input and can be fed straight to
 // `quadlet -dryrun` when reviewing a change to it.
 func TestGolden(t *testing.T) {
-	for _, fixture := range []string{"quoting", "networks"} {
+	for _, fixture := range []string{"quoting", "networks", "coverage"} {
 		t.Run(fixture, func(t *testing.T) {
 			dir := filepath.Join("testdata", fixture)
 			got := map[string]string{}
@@ -548,6 +555,37 @@ func TestQuotedValuesReachPodmanIntact(t *testing.T) {
 	}
 }
 
+// TestPairRoundTripsThroughTheIR checks the other half of issue #31: pair()
+// quotes only the value, never the whole NAME=value pair, so whatever value
+// it is given must read back through ir.FromParsed unchanged, whether or not
+// quote() decided the value needed quoting or escaping.
+func TestPairRoundTripsThroughTheIR(t *testing.T) {
+	values := []string{
+		"plain",
+		"has a space",
+		`say "hi"`,
+		`C:\Users\a`,
+		"it's",
+	}
+
+	for _, want := range values {
+		t.Run(want, func(t *testing.T) {
+			line := pair("V", want)
+			text := "[Container]\nImage=nginx\nEnvironment=" + line + "\n"
+
+			f, err := quadlet.Parse("app.container", strings.NewReader(text))
+			if err != nil {
+				t.Fatalf("parse %q: %v", line, err)
+			}
+			u := ir.FromParsed(f)
+
+			if len(u.Environment) != 1 || u.Environment[0].Value != want {
+				t.Errorf("Environment=%s round-tripped to %+v, want value %q", line, u.Environment, want)
+			}
+		})
+	}
+}
+
 // execStartArgv finds a service's ExecStart= in dry-run output and decodes it
 // the way systemd does. Quadlet writes each word bare or wholly double-quoted
 // with C escapes, so words split on spaces and unquote with strconv. An
@@ -614,6 +652,95 @@ func containsRun(argv, want []string) bool {
 		}
 	}
 	return false
+}
+
+// TestCoverageReachesPodmanIntact is the oracle for the compose keys that
+// were once dropped: the real generator must hand podman the flags compose
+// would have used.
+func TestCoverageReachesPodmanIntact(t *testing.T) {
+	out := dryRun(t, convertTestdata(t, "coverage").Units)
+
+	argv := execStartArgv(t, out, "app")
+	for _, want := range [][]string{
+		{"--name", "my-app"},
+		{"--network", "coverage_default:alias=app"},
+		{"--add-host", "db.internal:10.0.0.5"},
+		{"--pid=host", "--ipc=host"},
+		{"--init"},
+		{"--userns", "keep-id"},
+		{"--stop-timeout", "90"},
+		{"--dns-search", "example.internal"},
+		{"--ulimit", "nofile=65536"},
+		{"--ulimit", "nproc=1024:2048"},
+		{"--memory", "536870912"},
+		{"--pull", "always"},
+		{"--log-driver", "journald"},
+		{"--log-opt", "tag=my app"},
+		{"--annotation", "io.example=1"},
+		{"--pids-limit", "100"},
+		{"--health-cmd", "none"},
+		{"--tmpfs", "/run:size=67108864,mode=1777"},
+		{"-v", "data:/data:nocopy"},
+		{"-v", "/srv/cfg:/cfg:rshared"},
+		{"--env", "EXPLICIT_EMPTY="},
+	} {
+		if !containsRun(argv, want) {
+			t.Errorf("app: argv lacks %q\nargv: %q", want, argv)
+		}
+	}
+	for _, word := range argv {
+		// An unresolved `- VAR` leaves the variable unset in compose; an
+		// empty assignment is not the same thing.
+		if strings.HasPrefix(word, "QUADDOC_TEST_UNSET_21") {
+			t.Errorf("app: the unresolved variable reached podman as %q", word)
+		}
+		// A long-syntax tmpfs is not a persistent anonymous volume.
+		if word == "/run" {
+			t.Errorf("app: /run was mounted as a volume\nargv: %q", argv)
+		}
+	}
+
+	_, app, _ := strings.Cut(out, "---app.service---")
+	app, _, _ = strings.Cut(app, "\n---")
+	if !strings.Contains(app, "\nWants=db.service\n") || strings.Contains(app, "Requires=db.service") {
+		t.Errorf("app.service should want db, which compose marked required: false:\n%s", app)
+	}
+	if !strings.Contains(app, "\nRequires=cache.service\n") {
+		t.Errorf("app.service should still require cache:\n%s", app)
+	}
+}
+
+// TestUntranslatableKeysAreNoted checks that each compose key with no Quadlet
+// equivalent is reported against the unit it was dropped from.
+func TestUntranslatableKeysAreNoted(t *testing.T) {
+	notes := convertTestdata(t, "coverage").Notes
+
+	for _, want := range []struct{ unit, text string }{
+		{"app.container", `"security_opt"`},
+		{"app.container", `"cgroup_parent"`},
+		{"app.container", "QUADDOC_TEST_UNSET_21"},
+		{"app.container", "on-failure:3"},
+		{"app.container", "TimeoutStopSec="},
+		{"db.container", `"pid"`},
+		{"db.container", `"ipc"`},
+		{"db.container", `"pull_policy"`},
+		{"db.container", `"healthcheck.start_interval"`},
+	} {
+		found := false
+		for _, n := range notes {
+			if n.Unit == want.unit && strings.Contains(n.Message, want.text) {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("no note on %s mentions %s; notes were:\n%+v", want.unit, want.text, notes)
+		}
+	}
+	for _, n := range notes {
+		if n.Unit == "app.container" && (strings.Contains(n.Message, `"pid"`) || strings.Contains(n.Message, `"ipc"`)) {
+			t.Errorf("pid: host and ipc: host are translated, yet were noted: %s", n.Message)
+		}
+	}
 }
 
 func keys(m map[string]string) []string {

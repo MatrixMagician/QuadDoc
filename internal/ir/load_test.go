@@ -3,6 +3,7 @@ package ir
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -207,6 +208,33 @@ GroupAdd=
 	if len(u.Networks) != 0 || len(u.Ports) != 0 || len(u.Environment) != 0 || len(u.GroupAdd) != 0 {
 		t.Errorf("networks/ports/environment/groupAdd = %v/%v/%v/%v, want all empty",
 			u.Networks, u.Ports, u.Environment, u.GroupAdd)
+	}
+}
+
+func TestFromParsedHandlesQuotedEnvironment(t *testing.T) {
+	// Verified against Podman 5.8.4: both lines produce `--env DB_PASSWORD=secret
+	// value` and `--env QUOTED=say "hi"` respectively (systemd.syntax(7) quoting).
+	f, err := quadlet.Parse("app.container", strings.NewReader(`[Container]
+Image=nginx
+Environment="DB_PASSWORD=secret value"
+Environment=QUOTED="say \"hi\""
+`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	u := FromParsed(f)
+
+	want := []EnvVar{
+		{Name: "DB_PASSWORD", Value: "secret value", Line: 3},
+		{Name: "QUOTED", Value: `say "hi"`, Line: 4},
+	}
+	if len(u.Environment) != len(want) {
+		t.Fatalf("environment = %+v, want %+v", u.Environment, want)
+	}
+	for i, e := range want {
+		if u.Environment[i] != e {
+			t.Errorf("environment[%d] = %+v, want %+v", i, u.Environment[i], e)
+		}
 	}
 }
 
@@ -437,6 +465,116 @@ func TestFromParsedOnANonUnitExtension(t *testing.T) {
 	}
 	if u.Image != "" {
 		t.Errorf("image = %q, want empty for an unknown unit type", u.Image)
+	}
+}
+
+func TestMountKeyBindEntriesAreModelled(t *testing.T) {
+	// podman-run(1) --mount, and the generator's own treatment of each form,
+	// verified against Podman 5.8.4 (quadlet -dryrun and podman create/inspect).
+	tests := []struct {
+		name  string
+		value string
+		want  []Mount // nil: not modelled as a bind mount
+	}{
+		{
+			name:  "a plain bind mount",
+			value: "type=bind,source=/srv/web,destination=/data",
+			want:  []Mount{{Source: "/srv/web", Destination: "/data", Type: MountBind}},
+		},
+		{
+			name:  "short keys and every normalised option",
+			value: "type=bind,src=./rel,dst=/rel,relabel=private,U=true,ro",
+			want:  []Mount{{Source: "./rel", Destination: "/rel", Type: MountBind, Options: []string{"Z", "U", "ro"}}},
+		},
+		{
+			name:  "fields in any order, long synonyms",
+			value: "destination=/d,type=bind,source=%h/x,readonly=TRUE,relabel=shared,chown",
+			want:  []Mount{{Source: "%h/x", Destination: "/d", Type: MountBind, Options: []string{"ro", "z", "U"}}},
+		},
+		{
+			name:  "target is a destination synonym and bare Z is accepted",
+			value: "type=bind,source=/s,target=/t,Z",
+			want:  []Mount{{Source: "/s", Destination: "/t", Type: MountBind, Options: []string{"Z"}}},
+		},
+		{
+			// podman reads any boolean other than bare or "true" as false:
+			// ro=1 is read-write.
+			name:  "false booleans are not options",
+			value: "type=bind,source=/s,destination=/d,ro=false,readonly=1,U=false,chown=false",
+			want:  []Mount{{Source: "/s", Destination: "/d", Type: MountBind}},
+		},
+		{
+			name:  "other options pass through",
+			value: "type=bind,source=/s,destination=/d,bind-propagation=rslave",
+			want:  []Mount{{Source: "/s", Destination: "/d", Type: MountBind, Options: []string{"bind-propagation=rslave"}}},
+		},
+		{
+			name:  "the last source wins",
+			value: "type=bind,source=/b1,source=/b2,destination=/b",
+			want:  []Mount{{Source: "/b2", Destination: "/b", Type: MountBind}},
+		},
+		{
+			name:  "Quadlet reads the value as CSV",
+			value: `type=bind,"source=/a,b",destination=/d`,
+			want:  []Mount{{Source: "/a,b", Destination: "/d", Type: MountBind}},
+		},
+		{name: "a volume mount", value: "type=volume,source=pg.volume,destination=/pg"},
+		{name: "no type defaults to volume", value: "source=/srv,destination=/d"},
+		{name: "the type key is case-sensitive", value: "Type=bind,source=/srv,destination=/d"},
+		{name: "the type value is case-sensitive", value: "type=Bind,source=/srv,destination=/d"},
+		{name: "no source", value: "type=bind,destination=/d"},
+		{name: "an invalid relabel, which podman rejects", value: "type=bind,source=/s,destination=/d,relabel=Private"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, err := quadlet.Parse("web.container", strings.NewReader("[Container]\nImage=nginx\nMount="+tt.value+"\n"))
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			u := FromParsed(f)
+			for i := range tt.want {
+				tt.want[i].Line, tt.want[i].Raw = 3, tt.value
+			}
+			if !reflect.DeepEqual(u.Mounts, tt.want) {
+				t.Errorf("mounts =\n  %+v\nwant\n  %+v", u.Mounts, tt.want)
+			}
+			if len(u.Mounts) == 1 && u.Mounts[0].Key() != "Mount" {
+				t.Errorf("key = %q, want Mount", u.Mounts[0].Key())
+			}
+		})
+	}
+}
+
+func TestEmptyMountAndVolumeResetOnlyTheirOwnKey(t *testing.T) {
+	// Verified against Podman 5.8.4: `Mount=` drops earlier Mount= entries but
+	// keeps -v /v:/v, and `Volume=` drops -v but keeps earlier --mount ones.
+	f, err := quadlet.Parse("web.container", strings.NewReader(`[Container]
+Image=nginx
+Mount=type=bind,source=/m1,destination=/m1
+Volume=/v1:/v1
+Mount=
+Volume=/v2:/v2
+Mount=type=bind,source=/m2,destination=/m2
+Volume=
+`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	var got []string
+	for _, m := range FromParsed(f).Mounts {
+		got = append(got, m.Key()+"="+m.Source)
+	}
+	if want := []string{"Mount=/m2"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("mounts = %v, want %v", got, want)
+	}
+}
+
+func TestVolumeMountsReportTheVolumeKey(t *testing.T) {
+	for _, value := range []string{"/srv:/data:Z", "/data", "pg.volume:/pg", "./rel:/d"} {
+		if got := ParseMount(value, 1).Key(); got != "Volume" {
+			t.Errorf("ParseMount(%q).Key() = %q, want Volume", value, got)
+		}
 	}
 }
 

@@ -1,9 +1,11 @@
 package ir
 
 import (
+	"encoding/csv"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -98,8 +100,10 @@ func FromParsed(f *quadlet.File) *Unit {
 		// the generator honours this for every list modelled here.
 		if e.Value == "" {
 			switch e.Key {
-			case "Volume":
-				u.Mounts = nil
+			case "Volume", "Mount":
+				// Each key resets only its own entries. Verified against
+				// Podman 5.8.4.
+				u.Mounts = slices.DeleteFunc(u.Mounts, func(m Mount) bool { return m.Key() == e.Key })
 				continue
 			case "PublishPort":
 				u.Ports = nil
@@ -120,6 +124,10 @@ func FromParsed(f *quadlet.File) *Unit {
 			u.Image = e.Value
 		case "Volume":
 			u.Mounts = append(u.Mounts, ParseMount(e.Value, e.Line))
+		case "Mount":
+			if m, ok := ParseMountKey(e.Value, e.Line); ok {
+				u.Mounts = append(u.Mounts, m)
+			}
 		case "PublishPort":
 			if p, ok := ParsePort(e.Value, e.Line); ok {
 				u.Ports = append(u.Ports, p)
@@ -206,6 +214,75 @@ func ParseMount(value string, line int) Mount {
 		m.Type = MountNamed
 	}
 	return m
+}
+
+// ParseMountKey decomposes one `Mount=` value, reporting false for anything
+// other than a bind mount podman would accept.
+//
+// The grammar is podman-run(1) --mount's `type=TYPE,KEY[=VALUE],...`, which
+// Quadlet reads as CSV. Quadlet defaults a missing type to volume and matches
+// `type=bind` exactly. Options are normalised to their Volume= spelling so the
+// rules see one vocabulary: relabel=private is Z, relabel=shared is z, U or
+// chown is U, and ro or readonly is ro. podman treats a boolean as set only
+// when it is bare or "true" in any case, so `ro=1` is read-write. Verified
+// against Podman 5.8.4 with quadlet -dryrun and podman create/inspect.
+func ParseMountKey(value string, line int) (Mount, bool) {
+	fields, err := csv.NewReader(strings.NewReader(value)).Read()
+	if err != nil {
+		return Mount{}, false
+	}
+
+	m := Mount{Line: line, Raw: value, Type: MountBind}
+	var bind bool
+	for _, field := range fields {
+		k, v, hasValue := strings.Cut(field, "=")
+		set := !hasValue || strings.EqualFold(v, "true")
+		switch k {
+		case "type":
+			bind = v == "bind"
+		case "src", "source":
+			m.Source = v
+		case "dst", "dest", "destination", "target":
+			m.Destination = v
+		case "relabel":
+			switch v {
+			case "private":
+				m.Options = append(m.Options, "Z")
+			case "shared":
+				m.Options = append(m.Options, "z")
+			default:
+				// podman refuses the mount, so there is nothing to audit.
+				return Mount{}, false
+			}
+		case "U", "chown":
+			if set {
+				m.Options = append(m.Options, "U")
+			}
+		case "ro", "readonly":
+			if set {
+				m.Options = append(m.Options, "ro")
+			}
+		default:
+			m.Options = append(m.Options, field)
+		}
+	}
+	return m, bind && m.Source != "" && m.Destination != ""
+}
+
+// MountKeySpelling gives the `Mount=` spelling of a normalised option, for
+// writing a remediation in the form the user wrote. podman-run(1) --mount.
+var MountKeySpelling = map[string]string{"Z": "relabel=private", "z": "relabel=shared", "U": "U=true", "ro": "ro"}
+
+// Key names the key that declared the mount, `Mount` or `Volume`.
+//
+// It is derived from Raw: a Volume= value parses as a Mount= bind only if its
+// comma-separated fields include `type=bind` and a source, which takes a volume
+// name podman rejects or paths containing `,type=bind`.
+func (m Mount) Key() string {
+	if _, ok := ParseMountKey(m.Raw, m.Line); ok {
+		return "Mount"
+	}
+	return "Volume"
 }
 
 // VolumeObjectName returns the Podman volume name a named-volume source
@@ -317,7 +394,8 @@ func portNumber(s string) (int, error) {
 }
 
 // parseEnv decomposes an `Environment=` value, which may carry several
-// space-separated assignments on one line.
+// space-separated assignments on one line, each optionally quoted per
+// systemd.syntax(7) (either the value alone or the whole NAME=value pair).
 func parseEnv(value string, line int) []EnvVar {
 	var out []EnvVar
 	for _, field := range splitEnvFields(value) {
@@ -325,32 +403,40 @@ func parseEnv(value string, line int) []EnvVar {
 		if !found {
 			continue
 		}
-		out = append(out, EnvVar{
-			Name:  strings.TrimSpace(name),
-			Value: strings.Trim(strings.TrimSpace(val), `"'`),
-			Line:  line,
-		})
+		out = append(out, EnvVar{Name: name, Value: val, Line: line})
 	}
 	return out
 }
 
-// splitEnvFields splits on whitespace but keeps quoted runs together, so
-// `Environment=A=1 B="two words"` yields two assignments rather than three.
+// splitEnvFields splits value into already-unquoted `name=value` words per
+// systemd.syntax(7): whitespace separates assignments unless inside a quoted
+// run, and a backslash escapes the following character, including a quote,
+// which then does not end the run. Verified against Podman 5.8.4's Quadlet
+// generator (`quadlet -dryrun`): `A="x y" B=z`, `"K=v w"` and
+// `Q="say \"hi\""` each split and unquote exactly as its `--env` argument
+// does. Quotes and escaping backslashes are consumed, not kept, so the
+// result needs no further trimming.
 func splitEnvFields(value string) []string {
 	var fields []string
 	var cur strings.Builder
 	var quote rune
+	escaped := false
 
 	for _, r := range value {
 		switch {
+		case escaped:
+			cur.WriteRune(r)
+			escaped = false
+		case r == '\\':
+			escaped = true
 		case quote != 0:
 			if r == quote {
 				quote = 0
+			} else {
+				cur.WriteRune(r)
 			}
-			cur.WriteRune(r)
 		case r == '"' || r == '\'':
 			quote = r
-			cur.WriteRune(r)
 		case r == ' ' || r == '\t':
 			if cur.Len() > 0 {
 				fields = append(fields, cur.String())

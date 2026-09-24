@@ -1,0 +1,72 @@
+# Compose keys that were dropped without a note before issue #21: keys with a
+# direct Quadlet equivalent, optional dependencies, long-syntax mounts, a
+# disabled image healthcheck, and unresolved environment entries.
+services:
+  app:
+    image: docker.io/library/alpine:3.20
+    container_name: my-app
+    extra_hosts:
+      - "db.internal:10.0.0.5"
+    pid: host
+    ipc: host
+    init: true
+    userns_mode: keep-id
+    stop_grace_period: 1m30s
+    dns_search: [example.internal]
+    ulimits:
+      nofile: 65536
+      nproc:
+        soft: 1024
+        hard: 2048
+    mem_limit: 512m
+    pull_policy: always
+    logging:
+      driver: journald
+      options:
+        tag: my app
+    annotations:
+      io.example: "1"
+    pids_limit: 100
+    environment:
+      - QUADDOC_TEST_UNSET_21
+      - EXPLICIT_EMPTY=
+    healthcheck:
+      test: ["NONE"]
+    volumes:
+      - type: tmpfs
+        target: /run
+        tmpfs:
+          size: 67108864
+          mode: 0o1777
+      - type: volume
+        source: data
+        target: /data
+        volume:
+          nocopy: true
+      - type: bind
+        source: /srv/cfg
+        target: /cfg
+        bind:
+          propagation: rshared
+    depends_on:
+      db:
+        condition: service_started
+        required: false
+      cache:
+        condition: service_started
+    restart: on-failure:3
+    security_opt: ["label=disable"]
+    cgroup_parent: mygroup
+  db:
+    image: docker.io/library/postgres:16
+    pid: "service:cache"
+    ipc: shareable
+    pull_policy: daily
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready"]
+      start_interval: 5s
+  cache:
+    image: docker.io/library/redis:7
+
+volumes:
+  data:

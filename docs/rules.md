@@ -24,6 +24,7 @@ Every rule cites the documentation or observed behaviour it encodes.
 | [QD040](#qd040) | warning |  | AutoUpdate=registry needs a fully-qualified image reference |
 | [QD041](#qd041) | warning |  | Credential passed as an environment value in the unit file |
 | [QD042](#qd042) | error |  | Key is not recognised by Quadlet, so the unit is not generated |
+| [QD043](#qd043) | error |  | Container unit has neither Image= nor Rootfs= |
 
 ## QD000
 
@@ -223,4 +224,14 @@ A unit file is world-readable in the Quadlet search path and is usually committe
 The Quadlet generator rejects a unit that sets a key its section does not support: it logs "unsupported key" and creates no service for that unit, so `systemctl start` then reports the unit as not found. This most often bites when a key is spelled as its podman flag (Volumes= for Volume=) or as the compose key it came from.
 
 *Source: podman-systemd.unit(5) lists the keys each unit type accepts. The set is generated from the installed manual page by internal/rules/genkeys; see docs/adr/0002-minimum-podman-version.md for why per-version deltas are not attempted in v1. The rejection is Podman's checkForUnknownKeys (pkg/systemd/quadlet/quadlet.go), which returns "unsupported key '%s' in group '%s'" for the whole unit in both 5.0.0 and 5.8.4, the ends of the supported range; observed with quadlet -dryrun on 5.8.4. The 5.8.4 source also accepts ServiceName= in every unit section and LogOpt= in [Kube], and still honours the deprecated RemapUsers=, RemapUid=, RemapGid=, RemapUidSize= and VolatileTmp=, none of which the manual page lists for those sections.*
+
+## QD043
+
+**Container unit has neither Image= nor Rootfs=**
+
+- Default severity: `error`
+
+A container has to come from somewhere: a pulled image or an already-unpacked rootfs. A unit that sets neither passes lint and then fails at generation, which is a worse time to find out than now. There is no mechanical fix, because only the author knows which of the two was intended.
+
+*Source: podman-systemd.unit(5), Image=: "The image to run in the container." Rootfs=: "This option conflicts with the Image option." Neither is documented as optional on its own; the generator confirms it (observed, Podman 5.8.4): converting "x.container": no Image or Rootfs key specified.*
 

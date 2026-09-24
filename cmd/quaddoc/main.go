@@ -214,7 +214,11 @@ func runConvert(args []string) int {
 	// Translation notes go to stderr so that --dry-run output stays pipeable.
 	worst := 0
 	for _, n := range result.Notes {
-		fmt.Fprintf(os.Stderr, "%s: %s\n", n.Severity, n.Message)
+		if n.Unit != "" {
+			fmt.Fprintf(os.Stderr, "%s: %s: %s\n", n.Severity, n.Unit, n.Message)
+		} else {
+			fmt.Fprintf(os.Stderr, "%s: %s\n", n.Severity, n.Message)
+		}
 		if n.Severity == "warning" && worst < 1 {
 			worst = 1
 		}

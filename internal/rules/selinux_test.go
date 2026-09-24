@@ -602,3 +602,83 @@ func TestHostDowngradeResistsBeingRaisedByConfig(t *testing.T) {
 		})
 	}
 }
+
+// TestMountKeyBindMountsAreAudited covers issue #22: a `Mount=type=bind` entry
+// takes the same relabelling and ownership decisions as a `Volume=` bind
+// mount, and its remediation must be pasteable in the Mount= spelling.
+func TestMountKeyBindMountsAreAudited(t *testing.T) {
+	const bind = "Mount=type=bind,source=/srv/web,destination=/data"
+
+	t.Run("QD001 suggests relabel=private for a private source", func(t *testing.T) {
+		u := unitFromText(t, "web.container", "[Container]\nImage=nginx\n"+bind+"\n")
+		got := runRule(t, "QD001", enforcing, u)
+		if len(got) != 1 {
+			t.Fatalf("findings = %d, want 1", len(got))
+		}
+		want := "Add relabel=private to the mount, used only by this unit, so a private label is right:\n\n" +
+			"    " + bind + ",relabel=private\n\n"
+		if !strings.HasPrefix(got[0].Remediation, want) {
+			t.Errorf("remediation =\n%s\nwant prefix\n%s", got[0].Remediation, want)
+		}
+		if got[0].Fix["option"] != "Z" {
+			t.Errorf("fix option = %q, want Z", got[0].Fix["option"])
+		}
+	})
+
+	t.Run("QD001 counts a Mount= and a Volume= of one source as shared", func(t *testing.T) {
+		web := unitFromText(t, "web.container", "[Container]\nImage=nginx\n"+bind+"\n")
+		db := unitFromText(t, "db.container", "[Container]\nImage=postgres\nVolume=/srv/web:/data\n")
+		got := runRule(t, "QD001", enforcing, web, db)
+		if len(got) != 2 {
+			t.Fatalf("findings = %d, want 2", len(got))
+		}
+		for _, want := range []string{"    " + bind + ",relabel=shared\n", "    Volume=/srv/web:/data:z\n"} {
+			if !strings.Contains(got[0].Remediation+got[1].Remediation, want) {
+				t.Errorf("no remediation contains %q:\n%s\n%s", want, got[0].Remediation, got[1].Remediation)
+			}
+		}
+	})
+
+	t.Run("a labelled Mount= is left alone by QD001", func(t *testing.T) {
+		u := unitFromText(t, "web.container", "[Container]\nImage=nginx\n"+bind+",relabel=private\n")
+		if got := runRule(t, "QD001", enforcing, u); len(got) != 0 {
+			t.Errorf("findings = %+v, want none", got)
+		}
+	})
+
+	t.Run("QD002 rewrites relabel=private as relabel=shared", func(t *testing.T) {
+		a := unitFromText(t, "a.container", "[Container]\nImage=a\n"+bind+",relabel=private,ro\n")
+		b := unitFromText(t, "b.container", "[Container]\nImage=b\nVolume=/srv/web:/data:Z\n")
+		got := runRule(t, "QD002", enforcing, a, b)
+		if len(got) != 2 {
+			t.Fatalf("findings = %d, want 2", len(got))
+		}
+		want := "    Mount=type=bind,source=/srv/web,destination=/data,ro,relabel=shared\n"
+		if !strings.Contains(got[0].Remediation, want) {
+			t.Errorf("remediation =\n%s\nwant it to contain\n%s", got[0].Remediation, want)
+		}
+	})
+
+	t.Run("QD004 names the relabel option to remove", func(t *testing.T) {
+		u := unitFromText(t, "web.container",
+			"[Container]\nImage=nginx\nMount=type=bind,source=/etc,destination=/etc,relabel=shared\n")
+		got := runRule(t, "QD004", enforcing, u)
+		if len(got) != 1 {
+			t.Fatalf("findings = %d, want 1", len(got))
+		}
+		if !strings.HasPrefix(got[0].Remediation, "Remove the relabel=shared option") {
+			t.Errorf("remediation =\n%s", got[0].Remediation)
+		}
+	})
+
+	t.Run("QD010 sees a writable Mount= bind of a non-root container", func(t *testing.T) {
+		u := unitFromText(t, "app.container", "[Container]\nImage=app\nUser=1000\n"+bind+"\n")
+		if got := runRule(t, "QD010", rootlessHost, u); len(got) != 1 {
+			t.Errorf("findings = %d, want 1", len(got))
+		}
+		u = unitFromText(t, "app.container", "[Container]\nImage=app\nUser=1000\n"+bind+",U=true\n")
+		if got := runRule(t, "QD010", rootlessHost, u); len(got) != 0 {
+			t.Errorf("U=true should satisfy QD010: %+v", got)
+		}
+	})
+}

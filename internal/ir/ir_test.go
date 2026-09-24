@@ -254,3 +254,59 @@ func TestParseEnvKeepsQuotedValuesTogether(t *testing.T) {
 		t.Errorf("parseEnv =\n  %+v\nwant\n  %+v", got, want)
 	}
 }
+
+// TestParseEnvMatchesQuadletsSplit checks parseEnv against `--env` arguments
+// observed from `/usr/libexec/podman/quadlet -dryrun -user` (Podman 5.8.4):
+// each of these Environment= lines produces exactly the --env below.
+func TestParseEnvMatchesQuadletsSplit(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		want  []EnvVar
+	}{
+		{
+			// --env A=x\x20y --env B=z
+			name:  "value quoted alone, another assignment bare",
+			value: `A="x y" B=z`,
+			want: []EnvVar{
+				{Name: "A", Value: "x y", Line: 1},
+				{Name: "B", Value: "z", Line: 1},
+			},
+		},
+		{
+			// --env K=v\x20w
+			name:  "whole pair quoted",
+			value: `"K=v w"`,
+			want: []EnvVar{
+				{Name: "K", Value: "v w", Line: 1},
+			},
+		},
+		{
+			// --env "Q=say\x20\"hi\"": a backslash-escaped quote is a literal
+			// quote character, not the end of the quoted run.
+			name:  "backslash-escaped quote inside a quoted value",
+			value: `Q="say \"hi\""`,
+			want: []EnvVar{
+				{Name: "Q", Value: `say "hi"`, Line: 1},
+			},
+		},
+		{
+			// --env P=100%%: quadlet does not touch %, so a literal %% passes
+			// through unchanged (it is not systemd specifier-escaping here).
+			name:  "percent signs pass through untouched",
+			value: `P=100%%`,
+			want: []EnvVar{
+				{Name: "P", Value: "100%%", Line: 1},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseEnv(tt.value, 1)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("parseEnv(%q) =\n  %+v\nwant\n  %+v", tt.value, got, tt.want)
+			}
+		})
+	}
+}

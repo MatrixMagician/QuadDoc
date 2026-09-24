@@ -1,0 +1,16 @@
+[Unit]
+Description=db (from compose service db)
+After=cache.service
+Requires=cache.service
+
+[Container]
+ContainerName=db
+Image=docker.io/library/postgres:16
+Network=coverage-default.network
+HealthCmd=pg_isready
+
+[Service]
+Restart=no
+
+[Install]
+WantedBy=default.target
