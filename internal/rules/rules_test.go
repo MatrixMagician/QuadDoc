@@ -66,11 +66,30 @@ func TestQD022(t *testing.T) {
 			wantFindings: 1, wantSeverity: Error,
 		},
 		{
+			// podman-systemd.unit(5): "Type may be explicitly set to oneshot
+			// for .container and .kube files when no containers are expected
+			// to run once podman exits."
 			name: "a one-shot is a note, not an error",
 			unit: "job.container",
 			text: "[Container]\nImage=docker.io/library/alpine:3.20\n" +
-				"[Service]\nRestart=no\n",
+				"[Service]\nType=oneshot\nRemainAfterExit=yes\n",
 			wantFindings: 1, wantSeverity: Note,
+		},
+		{
+			// systemd.service(5): on-failure is "the recommended choice for
+			// long-running services".
+			name: "Restart=on-failure is a long-running service",
+			unit: "web.container",
+			text: "[Container]\nImage=docker.io/library/nginx:1.27\n" +
+				"[Service]\nRestart=on-failure\n",
+			wantFindings: 1, wantSeverity: Error,
+		},
+		{
+			name: "Restart=no is the systemd default, not a one-shot marker",
+			unit: "web.container",
+			text: "[Container]\nImage=docker.io/library/nginx:1.27\n" +
+				"[Service]\nRestart=no\n",
+			wantFindings: 1, wantSeverity: Error,
 		},
 		{
 			// Verified against Podman 5.8.4: the pod service gets

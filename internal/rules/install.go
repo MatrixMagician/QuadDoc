@@ -29,7 +29,9 @@ func init() {
 			"order for them to become automatically enabled on the next boot\". Instead " +
 			"the generator \"manually applies the [Install] section of the container " +
 			"definition unit files during generation, in the same way systemctl enable " +
-			"does when run later\".",
+			"does when run later\". A unit with [Service] Type=oneshot is reported as a " +
+			"note: the same page allows it for .container and .kube units \"when no " +
+			"containers are expected to run once podman exits\".",
 		DefaultSeverity: Error,
 		Fixable:         true,
 		Check:           checkQD022,
@@ -57,14 +59,17 @@ var installKeysHonoured = map[string]bool{
 	"upheldby":   true,
 }
 
-// oneShotImages are images whose containers are expected to run once and exit,
-// for which a missing [Install] is a note rather than an error. The spec calls
-// for this distinction; we detect it from an explicit signal rather than
-// guessing at the image's behaviour.
+// isOneShot reports whether a unit is expected to run once and exit, for which
+// a missing [Install] is a note rather than an error. The signal is the
+// explicit `[Service] Type=oneshot` that podman-systemd.unit(5) documents for
+// .container and .kube units. A restart policy is not one: on-failure is
+// "the recommended choice for long-running services" (systemd.service(5)),
+// and no is systemd's default.
 func isOneShot(u *ir.Unit) bool {
-	// A container that Quadlet is told not to restart, or that declares
-	// Type=oneshot behaviour through its service section, is a one-shot.
-	return u.Restart == "no" || u.Restart == "on-failure"
+	if u.Source == nil {
+		return false
+	}
+	return lower(lastValue(u.Source.Values("Service", "Type"))) == "oneshot"
 }
 
 func checkQD022(c *Context) []Finding {
