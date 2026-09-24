@@ -234,7 +234,6 @@ var knownKeys = map[string]map[string]bool{
 		"ContainersConfModule": true,
 		"Creds":                true,
 		"DecryptionKey":        true,
-		"DefaultDependencies":  true,
 		"GlobalArgs":           true,
 		"PodmanArgs":           true,
 		"Quiet":                true,
@@ -242,5 +241,8 @@ var knownKeys = map[string]map[string]bool{
 		"RetryDelay":           true,
 		"ServiceName":          true,
 		"TLSVerify":            true,
+	},
+	"Quadlet": {
+		"DefaultDependencies": true,
 	},
 }
