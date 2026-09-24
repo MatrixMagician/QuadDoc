@@ -2,6 +2,7 @@ package rules
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -229,16 +230,26 @@ func checkQD032(c *Context) []Finding {
 		return nil
 	}
 
-	taken := make(map[string]bool, len(existing))
-	for _, p := range existing {
-		taken[filepath.Base(p)] = true
-	}
-
 	var findings []Finding
 	for _, u := range c.Project.Units {
-		// Compare the file name, which is what the search path collides on.
+		// Compare the file name, which is what the search path collides on,
+		// but not with the unit's own file: linting the installed units in
+		// place is not a collision. Identity rather than path equality,
+		// since a search path may be reached through a symlink.
 		fileName := u.Name + "." + string(u.Kind)
-		if !taken[fileName] {
+		self, selfErr := os.Stat(u.Path)
+		clash := ""
+		for _, p := range existing {
+			if filepath.Base(p) != fileName {
+				continue
+			}
+			if other, err := os.Stat(p); err == nil && selfErr == nil && os.SameFile(self, other) {
+				continue
+			}
+			clash = p
+			break
+		}
+		if clash == "" {
 			continue
 		}
 
@@ -246,8 +257,8 @@ func checkQD032(c *Context) []Finding {
 			Severity:   Error,
 			Confidence: Confirmed,
 			Unit:       u.Path,
-			Message: fmt.Sprintf("a unit called %s is already installed in the Quadlet search path, and would be replaced",
-				fileName),
+			Message: fmt.Sprintf("a unit called %s is already installed at %s in the Quadlet search path, and would be replaced",
+				fileName, clash),
 			Remediation: fmt.Sprintf("Rename this unit, or remove the installed one first. Note that "+
 				"Quadlet also names the Podman objects it creates after the unit: %s "+
 				"would create `systemd-%s`, so a rename changes the object name too.",

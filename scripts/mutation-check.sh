@@ -82,6 +82,11 @@ s=s.replace('would create \`systemd-%s\`, so a rename changes the object name to
 s=s.replace('\t\t\t\tfileName, u.Name),','\t\t\t\tfileName),')
 open(p,'w').write(s)"
 
+run_mutation "QD032 reports a unit colliding with itself" "$P/network.go" ./$P "
+p='$P/network.go'; s=open(p).read()
+s=s.replace('os.SameFile(self, other) {','os.SameFile(self, other) && false {')
+open(p,'w').write(s)"
+
 run_mutation "QD041 reports \${VAR} references as leaks" "$P/hygiene.go" ./$P "
 p='$P/hygiene.go'; s=open(p).read()
 s=s.replace('\tif strings.HasPrefix(v, \"\$\") || strings.HasPrefix(v, \"%\") {\n\t\treturn false\n\t}','')
