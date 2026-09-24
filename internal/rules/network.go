@@ -21,7 +21,9 @@ func init() {
 		Citation: "Observed on Podman 5.8.4: `podman network inspect podman` reports " +
 			"\"dns_enabled\": false for the default network. podman-network-create(1) " +
 			"enables DNS for user-defined networks, which podman-systemd.unit(5) " +
-			"creates from a .network unit.",
+			"creates from a .network unit. podman-run(1) --network: `bridge[:OPTIONS]` " +
+			"is the default network, and pasta, slirp4netns and private give the " +
+			"container a network stack of its own, so none of them resolves siblings.",
 		DefaultSeverity: Error,
 		Fixable:         true,
 		Check:           checkQD030,
@@ -99,20 +101,41 @@ func networkIsolating(value string) bool {
 	return v == "host" || v == "none"
 }
 
+// Network= modes that put a container on no user-defined network, per
+// podman-run(1) --network. Each may carry `:OPTIONS`, and the generator splits
+// the value on the first colon, so the mode is what precedes it.
+var (
+	// defaultNetworkModes name the default network, whose DNS is disabled.
+	defaultNetworkModes = map[string]bool{"bridge": true, "podman": true}
+	// ownStackModes give the container a user-mode stack of its own.
+	ownStackModes = map[string]bool{"pasta": true, "slirp4netns": true, "private": true}
+)
+
 // hasSharedNetwork reports whether a unit joins a user-defined network, which
 // is what enables DNS between containers.
 func hasSharedNetwork(u *ir.Unit) bool {
 	for _, n := range u.Networks {
-		if networkIsolating(n) {
+		mode, _, _ := strings.Cut(lower(n), ":")
+		if mode == "" || networkIsolating(n) || defaultNetworkModes[mode] || ownStackModes[mode] {
 			continue
 		}
 		// A .network unit reference, a .container reference (sharing another
 		// container's stack), or a named network all provide DNS.
-		if n != "" && !strings.EqualFold(n, "bridge") && !strings.EqualFold(n, "podman") {
-			return true
-		}
+		return true
 	}
 	return false
+}
+
+// ownStack returns the Network= value that gives a unit a user-mode stack of
+// its own (pasta, slirp4netns or private), or "" when it has none.
+func ownStack(u *ir.Unit) string {
+	for _, n := range u.Networks {
+		mode, _, _ := strings.Cut(lower(n), ":")
+		if ownStackModes[mode] {
+			return n
+		}
+	}
+	return ""
 }
 
 func checkQD030(c *Context) []Finding {
@@ -144,24 +167,32 @@ func checkQD030(c *Context) []Finding {
 			continue
 		}
 
+		where, join := "is on the default network, where DNS is disabled", "then in each container unit:"
+		if own := ownStack(u); own != "" {
+			// Podman refuses another network beside a user-mode stack, so
+			// the line has to go, not gain a sibling.
+			where = fmt.Sprintf("uses Network=%s, a network stack of its own with no DNS", own)
+			join = fmt.Sprintf("then in each container unit, and in this one replacing Network=%s:", own)
+		}
+
 		findings = append(findings, Finding{
 			Severity:   Error,
 			Confidence: Confirmed,
 			Unit:       u.Path,
 			Line:       u.KeyLine("Network"),
-			Message: fmt.Sprintf("%s is on the default network, where DNS is disabled, so it cannot resolve the other %d containers in this project by name",
-				u.Name, len(containers)-1),
+			Message: fmt.Sprintf("%s %s, so it cannot resolve the other %d containers in this project by name",
+				u.Name, where, len(containers)-1),
 			Remediation: fmt.Sprintf("Create a shared network unit and join it. In a file called "+
 				"`%s.network`:\n\n"+
 				"    [Network]\n"+
 				"    NetworkName=%s\n\n"+
 				"    [Install]\n"+
 				"    WantedBy=default.target\n\n"+
-				"then in each container unit:\n\n"+
+				"%s\n\n"+
 				"    Network=%s.network\n\n"+
 				"Podman's default network reports dns_enabled: false, so this is required "+
 				"for sibling names to resolve at all, not merely tidier.",
-				defaultNetworkName(c), defaultNetworkName(c), defaultNetworkName(c)),
+				defaultNetworkName(c), defaultNetworkName(c), join, defaultNetworkName(c)),
 		})
 	}
 	return findings

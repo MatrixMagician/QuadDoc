@@ -170,7 +170,7 @@ Quadlet applies only Alias, WantedBy, RequiredBy, and UpheldBy from [Install]. A
 
 Podman's default network has DNS disabled, so containers on it cannot resolve each other by name at all. This is not a degraded form of compose's behaviour, it is the absence of it: a container that expects to reach a sibling by service name fails with an unresolvable host.
 
-*Source: Observed on Podman 5.8.4: `podman network inspect podman` reports "dns_enabled": false for the default network. podman-network-create(1) enables DNS for user-defined networks, which podman-systemd.unit(5) creates from a .network unit.*
+*Source: Observed on Podman 5.8.4: `podman network inspect podman` reports "dns_enabled": false for the default network. podman-network-create(1) enables DNS for user-defined networks, which podman-systemd.unit(5) creates from a .network unit. podman-run(1) --network: `bridge[:OPTIONS]` is the default network, and pasta, slirp4netns and private give the container a network stack of its own, so none of them resolves siblings.*
 
 ## QD031
 
