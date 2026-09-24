@@ -186,7 +186,7 @@ func (u *Unit) KeyLine(key string) int {
 	if u.keyLines == nil {
 		return 0
 	}
-	return u.keyLines[strings.ToLower(key)]
+	return u.keyLines[key]
 }
 
 // SetKeyLine records where a key was declared. Used by loaders.
@@ -194,7 +194,7 @@ func (u *Unit) SetKeyLine(key string, line int) {
 	if u.keyLines == nil {
 		u.keyLines = make(map[string]int)
 	}
-	u.keyLines[strings.ToLower(key)] = line
+	u.keyLines[key] = line
 }
 
 // SourceFile is the parsed-file behaviour the IR needs, kept as an interface so

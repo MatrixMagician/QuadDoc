@@ -97,52 +97,52 @@ func FromParsed(f *quadlet.File) *Unit {
 		// An empty assignment resets a list-valued key (systemd.syntax(7));
 		// the generator honours this for every list modelled here.
 		if e.Value == "" {
-			switch strings.ToLower(e.Key) {
-			case "volume":
+			switch e.Key {
+			case "Volume":
 				u.Mounts = nil
 				continue
-			case "publishport":
+			case "PublishPort":
 				u.Ports = nil
 				continue
-			case "network":
+			case "Network":
 				u.Networks = nil
 				continue
-			case "environment":
+			case "Environment":
 				u.Environment = nil
 				continue
-			case "groupadd":
+			case "GroupAdd":
 				u.GroupAdd = nil
 				continue
 			}
 		}
-		switch strings.ToLower(e.Key) {
-		case "image":
+		switch e.Key {
+		case "Image":
 			u.Image = e.Value
-		case "volume":
+		case "Volume":
 			u.Mounts = append(u.Mounts, ParseMount(e.Value, e.Line))
-		case "publishport":
+		case "PublishPort":
 			if p, ok := ParsePort(e.Value, e.Line); ok {
 				u.Ports = append(u.Ports, p)
 			}
-		case "network":
+		case "Network":
 			u.Networks = append(u.Networks, e.Value)
-		case "environment":
+		case "Environment":
 			u.Environment = append(u.Environment, parseEnv(e.Value, e.Line)...)
-		case "user":
+		case "User":
 			u.User = e.Value
-		case "group":
+		case "Group":
 			u.Group = e.Value
-		case "groupadd":
+		case "GroupAdd":
 			u.GroupAdd = append(u.GroupAdd, e.Value)
-		case "userns":
+		case "UserNS":
 			u.UserNS = e.Value
-		case "autoupdate":
+		case "AutoUpdate":
 			u.AutoUpdate = e.Value
-		case "pod":
+		case "Pod":
 			u.Pod = e.Value
-		case "notify":
+		case "Notify":
 			u.Notify = e.Value
-		case "healthcmd":
+		case "HealthCmd":
 			u.HasHealthCmd = e.Value != "" && e.Value != "none"
 		}
 	}

@@ -210,6 +210,26 @@ GroupAdd=
 	}
 }
 
+func TestLowercaseSectionsAndKeysAreNotModelled(t *testing.T) {
+	// Verified against Podman 5.8.4: the generator matches section and key
+	// names exactly, so neither unit has an Image, and [service] carries no
+	// Restart=.
+	for _, text := range []string{
+		"[container]\nimage=nginx\nvolume=/srv:/data\n[service]\nRestart=always\n[install]\nWantedBy=default.target\n",
+		"[Container]\nimage=nginx\nvolume=/srv:/data\n[Service]\nrestart=always\n",
+	} {
+		f, err := quadlet.Parse("web.container", strings.NewReader(text))
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		u := FromParsed(f)
+		if u.Image != "" || len(u.Mounts) != 0 || u.Restart != "" || u.HasInstall {
+			t.Errorf("%q loaded image=%q mounts=%v restart=%q install=%v, want none",
+				text, u.Image, u.Mounts, u.Restart, u.HasInstall)
+		}
+	}
+}
+
 func TestHealthCmdNoneMeansNoHealthcheck(t *testing.T) {
 	// podman-systemd.unit(5): "A value of none disables existing healthchecks."
 	f, err := quadlet.Parse("web.container",
@@ -237,9 +257,9 @@ func TestKeyLine(t *testing.T) {
 	if got := u.KeyLine("User"); got != 5 {
 		t.Errorf("KeyLine(User) = %d, want 5", got)
 	}
-	// Case-insensitive, as systemd is.
-	if got := u.KeyLine("image"); got != 3 {
-		t.Errorf("KeyLine is case-sensitive; got %d for lowercase", got)
+	// Case-sensitive, as the generator is.
+	if got := u.KeyLine("image"); got != 0 {
+		t.Errorf("KeyLine(image) = %d, want 0", got)
 	}
 	// A key that was never set has no line, rather than line zero being
 	// mistaken for line one.

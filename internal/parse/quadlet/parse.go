@@ -224,11 +224,12 @@ func (f *File) Entries() []Entry {
 }
 
 // Section returns every entry in the named section, in file order. Section
-// names are matched case-insensitively, as systemd does.
+// names are matched exactly: the generator ignores `[container]` in a
+// `.container` file (verified against Podman 5.8.4).
 func (f *File) Section(name string) []Entry {
 	var out []Entry
 	for _, e := range f.Entries() {
-		if strings.EqualFold(e.Section, name) {
+		if e.Section == name {
 			out = append(out, e)
 		}
 	}
@@ -237,11 +238,12 @@ func (f *File) Section(name string) []Entry {
 
 // Values returns the values of every occurrence of a key within a section, in
 // file order. Repeated keys are the norm in Quadlet, so this, not a lookup of
-// one value, is the primary accessor.
+// one value, is the primary accessor. Keys are matched exactly, as systemd
+// and Quadlet do.
 func (f *File) Values(section, key string) []string {
 	var out []string
 	for _, e := range f.Section(section) {
-		if strings.EqualFold(e.Key, key) {
+		if e.Key == key {
 			out = append(out, e.Value)
 		}
 	}
@@ -264,7 +266,7 @@ func (f *File) Lookup(section, key string) (string, bool) {
 // intent, whereas an absent one means the unit will never autostart.
 func (f *File) HasSection(name string) bool {
 	for _, l := range f.Lines {
-		if l.Kind == LineSection && strings.EqualFold(l.Section, name) {
+		if l.Kind == LineSection && l.Section == name {
 			return true
 		}
 	}

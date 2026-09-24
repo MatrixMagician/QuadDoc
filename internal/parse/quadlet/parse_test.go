@@ -158,11 +158,24 @@ func TestMalformedLineIsPreservedNotDropped(t *testing.T) {
 	}
 }
 
-func TestSectionAndKeyMatchingIsCaseInsensitive(t *testing.T) {
-	f, _ := parseFixture(t, "web.container")
+func TestSectionAndKeyMatchingIsExact(t *testing.T) {
+	// Verified against Podman 5.8.4: a unit with `[container]` and `image=`
+	// is rejected with "no Image or Rootfs key specified".
+	f, err := Parse("mem", strings.NewReader("[container]\nimage=nginx\n[Container]\nimage=busybox\n[install]\n"))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
 
-	if _, ok := f.Lookup("container", "image"); !ok {
-		t.Error("lookup should match section and key case-insensitively, as systemd does")
+	for _, section := range []string{"Container", "container"} {
+		if v, ok := f.Lookup(section, "Image"); ok {
+			t.Errorf("Lookup(%s, Image) = %q, want no match for a lowercase key", section, v)
+		}
+	}
+	if v, _ := f.Lookup("container", "image"); v != "nginx" {
+		t.Errorf("Lookup(container, image) = %q, want nginx", v)
+	}
+	if f.HasSection("Install") {
+		t.Error("HasSection(Install) = true for a file with only [install]")
 	}
 }
 
