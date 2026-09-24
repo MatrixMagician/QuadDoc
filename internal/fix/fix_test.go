@@ -614,6 +614,30 @@ func TestADeclinedFixIsReportedAsUnfixed(t *testing.T) {
 	}
 }
 
+// TestFixMatchesSectionNamesExactly: Quadlet and systemd match section and key
+// names exactly, so a lowercase [install], [container], network= or volume= is
+// not what the rule meant and must not satisfy or receive a fix.
+func TestFixMatchesSectionNamesExactly(t *testing.T) {
+	got, changed := fixQD022(parseLines(t, "[Container]", "Image=nginx", "", "[install]", "WantedBy=default.target"))
+	if !changed || countOccurrences(got, "[Install]") != 1 || countOccurrences(got, "WantedBy=default.target") != 2 {
+		t.Errorf("a lowercase [install] should not stop [Install] being added: %v", got)
+	}
+
+	if got, changed := fixQD030(parseLines(t, "[container]", "Image=nginx"), "shared"); changed {
+		t.Errorf("Network= was written into a lowercase [container]: %v", got)
+	}
+
+	got, changed = fixQD030(parseLines(t, "[Container]", "Image=nginx", "network=shared.network"), "shared")
+	if !changed || countOccurrences(got, "Network=shared.network") != 1 {
+		t.Errorf("a lowercase network= key should not count as wired in: %v", got)
+	}
+
+	finding := rules.Finding{RuleID: "QD001", Line: 2, Fix: map[string]string{"option": "Z"}}
+	if got, changed := fixQD001(parseLines(t, "[Container]", "volume=/srv:/data"), finding); changed {
+		t.Errorf("a lowercase volume= key was labelled: %q", got[1].Raw)
+	}
+}
+
 // parseLines parses physical lines into the logical lines the fixers take.
 func parseLines(t *testing.T, physical ...string) []quadlet.Line {
 	t.Helper()

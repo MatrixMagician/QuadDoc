@@ -288,6 +288,16 @@ p='internal/ir/load.go'; s=open(p).read()
 s=s.replace('f.Lookup(\"Service\", \"Restart\")','f.Lookup(\"Container\", \"Restart\")')
 open(p,'w').write(s)"
 
+run_mutation "fix matches [Install] case-insensitively" "internal/fix/fix.go" ./internal/fix "
+p='internal/fix/fix.go'; s=open(p).read()
+s=s.replace('l.Kind == quadlet.LineEntry && l.Section == \"Install\"','l.Kind == quadlet.LineEntry && strings.EqualFold(l.Section, \"Install\")')
+open(p,'w').write(s)"
+
+run_mutation "fix writes into a lowercase [container]" "internal/fix/fix.go" ./internal/fix "
+p='internal/fix/fix.go'; s=open(p).read()
+s=s.replace('\t\tif l.Section != \"Container\" {','\t\tif !strings.EqualFold(l.Section, \"Container\") {')
+open(p,'w').write(s)"
+
 run_mutation "NamedVolumeUsers counts mounts not units" "internal/ir/ir.go" ./internal/ir "
 p='internal/ir/ir.go'; s=open(p).read()
 s=s.replace('\t\t\tif m.Type != MountNamed || seen[m.Source] {','\t\t\tif m.Type != MountNamed {')

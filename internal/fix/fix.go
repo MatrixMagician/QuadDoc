@@ -244,7 +244,7 @@ func fixQD001(lines []quadlet.Line, f rules.Finding) ([]quadlet.Line, bool) {
 	})
 	// A continued Volume= is left alone: the option belongs at the end of the
 	// value, and rewriting a continuation is not worth the risk of splitting it.
-	if idx < 0 || len(lines[idx].Raw) != 1 || !strings.EqualFold(lines[idx].Key, "Volume") {
+	if idx < 0 || len(lines[idx].Raw) != 1 || lines[idx].Key != "Volume" {
 		return lines, false
 	}
 	l := lines[idx]
@@ -297,7 +297,7 @@ func fixQD022(lines []quadlet.Line) ([]quadlet.Line, bool) {
 	// Idempotence: if the section already has a key, there is nothing to do.
 	// A commented-out key is not a key.
 	for _, l := range lines {
-		if l.Kind == quadlet.LineEntry && strings.EqualFold(l.Section, "Install") {
+		if l.Kind == quadlet.LineEntry && l.Section == "Install" {
 			return lines, false
 		}
 	}
@@ -306,7 +306,7 @@ func fixQD022(lines []quadlet.Line) ([]quadlet.Line, bool) {
 
 	// Fill in an existing empty [Install], or add the whole section.
 	for i, l := range lines {
-		if l.Kind == quadlet.LineSection && strings.EqualFold(l.Section, "Install") {
+		if l.Kind == quadlet.LineSection && l.Section == "Install" {
 			return slices.Insert(lines, i+1, wantedBy), true
 		}
 	}
@@ -329,11 +329,11 @@ func fixQD030(lines []quadlet.Line, networkUnit string) ([]quadlet.Line, bool) {
 	// where a human would have put it and never inside a continued entry.
 	insertAt := -1
 	for i, l := range lines {
-		if !strings.EqualFold(l.Section, "Container") {
+		if l.Section != "Container" {
 			continue
 		}
 		// Idempotence: already wired in.
-		if l.Kind == quadlet.LineEntry && strings.EqualFold(l.Key, "Network") && l.Value == want {
+		if l.Kind == quadlet.LineEntry && l.Key == "Network" && l.Value == want {
 			return lines, false
 		}
 		if l.Kind == quadlet.LineSection || l.Kind == quadlet.LineEntry {
