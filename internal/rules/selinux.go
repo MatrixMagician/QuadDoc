@@ -209,9 +209,9 @@ func checkQD001(c *Context) []Finding {
 						m.Source),
 					fmt.Sprintf("bind mount %s has no SELinux relabelling option, so on an enforcing system the container would be denied access",
 						m.Source)),
-				Remediation: fmt.Sprintf("Add :%s to the mount, %s:\n\n    Volume=%s\n\n"+
+				Remediation: fmt.Sprintf("Add %s to the mount, %s:\n\n    %s=%s\n\n"+
 					"Run `quaddoc fix --rule QD001` to apply this.",
-					option, explanation, withOption(m, option)),
+					spellOption(m, option), explanation, m.Key(), withOption(m, option)),
 				// The option was chosen using the project-wide sharing map.
 				// Handing it to the fix engine structurally is what stops the
 				// fix writing a :Z that QD002 would then flag.
@@ -252,10 +252,10 @@ func checkQD002(c *Context) []Finding {
 				Line:       m.Line,
 				Message: fmt.Sprintf("%s is mounted by %d units but uses the private label :Z, so they will overwrite each other's SELinux categories",
 					m.Source, c.BindSourceUsage[m.Source]),
-				Remediation: fmt.Sprintf("Use the shared label instead, in every unit that mounts it:\n\n    Volume=%s\n\n"+
+				Remediation: fmt.Sprintf("Use the shared label instead, in every unit that mounts it:\n\n    %s=%s\n\n"+
 					"There is no mechanical fix here: if these containers were meant to be "+
 					"isolated from each other, give them separate directories rather than "+
-					"weakening the label.", withOption(stripOption(m, "Z"), "z")),
+					"weakening the label.", m.Key(), withOption(stripOption(m, "Z"), "z")),
 			}
 			if downgraded {
 				finding = finding.MarkHostDowngraded()
@@ -301,7 +301,7 @@ func checkQD003(c *Context) []Finding {
 					Line:       m.Line,
 					Message: fmt.Sprintf("%s is on a filesystem mounted with context=, so the relabelling option does nothing",
 						m.Source),
-					Remediation: "Remove the :z or :Z option. The filesystem already carries a " +
+					Remediation: "Remove the " + spellLabel(m) + " option. The filesystem already carries a " +
 						"single label set at mount time, which relabelling cannot change.",
 				}
 				if downgraded {
@@ -365,13 +365,13 @@ func checkQD004(c *Context) []Finding {
 				Line:       m.Line,
 				Message: fmt.Sprintf("relabelling %s would rewrite the labels of a system directory: %s",
 					m.Source, sp.Reason),
-				Remediation: fmt.Sprintf("Remove the :z or :Z option and mount a dedicated subdirectory "+
+				Remediation: fmt.Sprintf("Remove the %s option and mount a dedicated subdirectory "+
 					"instead, for example a path under %%h or /srv/%s that only this "+
 					"container uses.\n\n"+
 					"If this has already been applied, repair the labels with:\n\n"+
 					"    sudo restorecon -R %s\n\n"+
 					"Relabelling is recursive and its effects outlive the container.",
-					u.Name, sp.Path),
+					spellLabel(m), u.Name, sp.Path),
 			})
 		}
 	}
@@ -415,10 +415,42 @@ func pathHasPrefix(path, dir string) bool {
 	return len(path) > len(dir) && path[:len(dir)] == dir && path[len(dir)] == '/'
 }
 
-// withOption renders a mount with an option added.
+// withOption renders a mount with an option added, in the spelling of the key
+// that declared it.
 func withOption(m ir.Mount, option string) string {
 	options := append(append([]string{}, m.Options...), option)
+	if m.Key() == "Mount" {
+		return renderMountKeyValue(m, options)
+	}
 	return renderMountValue(m, options)
+}
+
+// spellOption spells a normalised option as the mount's own key does.
+func spellOption(m ir.Mount, option string) string {
+	if m.Key() == "Mount" {
+		return ir.MountKeySpelling[option]
+	}
+	return ":" + option
+}
+
+// spellLabel spells the relabelling option a mount carries.
+func spellLabel(m ir.Mount) string {
+	if m.HasOption("Z") {
+		return spellOption(m, "Z")
+	}
+	return spellOption(m, "z")
+}
+
+// renderMountKeyValue rebuilds a `Mount=type=bind` value from its parts.
+func renderMountKeyValue(m ir.Mount, options []string) string {
+	parts := []string{"type=bind", "source=" + m.Source, "destination=" + m.Destination}
+	for _, o := range options {
+		if spelled, ok := ir.MountKeySpelling[o]; ok {
+			o = spelled
+		}
+		parts = append(parts, o)
+	}
+	return strings.Join(parts, ",")
 }
 
 // stripOption returns a copy of a mount without the named option.

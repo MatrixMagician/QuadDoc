@@ -1,9 +1,11 @@
 package ir
 
 import (
+	"encoding/csv"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -98,8 +100,10 @@ func FromParsed(f *quadlet.File) *Unit {
 		// the generator honours this for every list modelled here.
 		if e.Value == "" {
 			switch e.Key {
-			case "Volume":
-				u.Mounts = nil
+			case "Volume", "Mount":
+				// Each key resets only its own entries. Verified against
+				// Podman 5.8.4.
+				u.Mounts = slices.DeleteFunc(u.Mounts, func(m Mount) bool { return m.Key() == e.Key })
 				continue
 			case "PublishPort":
 				u.Ports = nil
@@ -120,6 +124,10 @@ func FromParsed(f *quadlet.File) *Unit {
 			u.Image = e.Value
 		case "Volume":
 			u.Mounts = append(u.Mounts, ParseMount(e.Value, e.Line))
+		case "Mount":
+			if m, ok := ParseMountKey(e.Value, e.Line); ok {
+				u.Mounts = append(u.Mounts, m)
+			}
 		case "PublishPort":
 			if p, ok := ParsePort(e.Value, e.Line); ok {
 				u.Ports = append(u.Ports, p)
@@ -206,6 +214,75 @@ func ParseMount(value string, line int) Mount {
 		m.Type = MountNamed
 	}
 	return m
+}
+
+// ParseMountKey decomposes one `Mount=` value, reporting false for anything
+// other than a bind mount podman would accept.
+//
+// The grammar is podman-run(1) --mount's `type=TYPE,KEY[=VALUE],...`, which
+// Quadlet reads as CSV. Quadlet defaults a missing type to volume and matches
+// `type=bind` exactly. Options are normalised to their Volume= spelling so the
+// rules see one vocabulary: relabel=private is Z, relabel=shared is z, U or
+// chown is U, and ro or readonly is ro. podman treats a boolean as set only
+// when it is bare or "true" in any case, so `ro=1` is read-write. Verified
+// against Podman 5.8.4 with quadlet -dryrun and podman create/inspect.
+func ParseMountKey(value string, line int) (Mount, bool) {
+	fields, err := csv.NewReader(strings.NewReader(value)).Read()
+	if err != nil {
+		return Mount{}, false
+	}
+
+	m := Mount{Line: line, Raw: value, Type: MountBind}
+	var bind bool
+	for _, field := range fields {
+		k, v, hasValue := strings.Cut(field, "=")
+		set := !hasValue || strings.EqualFold(v, "true")
+		switch k {
+		case "type":
+			bind = v == "bind"
+		case "src", "source":
+			m.Source = v
+		case "dst", "dest", "destination", "target":
+			m.Destination = v
+		case "relabel":
+			switch v {
+			case "private":
+				m.Options = append(m.Options, "Z")
+			case "shared":
+				m.Options = append(m.Options, "z")
+			default:
+				// podman refuses the mount, so there is nothing to audit.
+				return Mount{}, false
+			}
+		case "U", "chown":
+			if set {
+				m.Options = append(m.Options, "U")
+			}
+		case "ro", "readonly":
+			if set {
+				m.Options = append(m.Options, "ro")
+			}
+		default:
+			m.Options = append(m.Options, field)
+		}
+	}
+	return m, bind && m.Source != "" && m.Destination != ""
+}
+
+// MountKeySpelling gives the `Mount=` spelling of a normalised option, for
+// writing a remediation in the form the user wrote. podman-run(1) --mount.
+var MountKeySpelling = map[string]string{"Z": "relabel=private", "z": "relabel=shared", "U": "U=true", "ro": "ro"}
+
+// Key names the key that declared the mount, `Mount` or `Volume`.
+//
+// It is derived from Raw: a Volume= value parses as a Mount= bind only if its
+// comma-separated fields include `type=bind` and a source, which takes a volume
+// name podman rejects or paths containing `,type=bind`.
+func (m Mount) Key() string {
+	if _, ok := ParseMountKey(m.Raw, m.Line); ok {
+		return "Mount"
+	}
+	return "Volume"
 }
 
 // VolumeObjectName returns the Podman volume name a named-volume source

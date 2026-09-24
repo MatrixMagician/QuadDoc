@@ -288,6 +288,26 @@ p='internal/ir/load.go'; s=open(p).read()
 s=s.replace('f.Lookup(\"Service\", \"Restart\")','f.Lookup(\"Container\", \"Restart\")')
 open(p,'w').write(s)"
 
+run_mutation "Mount= accepts any type as a bind" "internal/ir/load.go" ./internal/ir "
+p='internal/ir/load.go'; s=open(p).read()
+s=s.replace('\t\t\tbind = v == \"bind\"','\t\t\tbind = true')
+open(p,'w').write(s)"
+
+run_mutation "an empty Mount= also resets Volume=" "internal/ir/load.go" ./internal/ir "
+p='internal/ir/load.go'; s=open(p).read()
+s=s.replace('return m.Key() == e.Key })','return true })')
+open(p,'w').write(s)"
+
+run_mutation "ro=1 read as read-only" "internal/ir/load.go" ./internal/ir "
+p='internal/ir/load.go'; s=open(p).read()
+s=s.replace('set := !hasValue || strings.EqualFold(v, \"true\")','set := v != \"false\"')
+open(p,'w').write(s)"
+
+run_mutation "fix labels an already-labelled Mount=" "internal/fix/fix.go" ./internal/fix "
+p='internal/fix/fix.go'; s=open(p).read()
+s=s.replace('\t\tif !ok || m.HasSELinuxLabel() {','\t\tif !ok {')
+open(p,'w').write(s)"
+
 run_mutation "fix matches [Install] case-insensitively" "internal/fix/fix.go" ./internal/fix "
 p='internal/fix/fix.go'; s=open(p).read()
 s=s.replace('l.Kind == quadlet.LineEntry && l.Section == \"Install\"','l.Kind == quadlet.LineEntry && strings.EqualFold(l.Section, \"Install\")')

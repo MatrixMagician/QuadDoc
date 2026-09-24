@@ -3,6 +3,7 @@ package fix
 import (
 	"github.com/MatrixMagician/quaddoc/internal/podmantest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -611,6 +612,94 @@ func TestADeclinedFixIsReportedAsUnfixed(t *testing.T) {
 	}
 	if strings.Join(ids, ",") != "QD001" {
 		t.Errorf("unfixed rules = %v, want [QD001]", ids)
+	}
+}
+
+// TestFixQD001WritesTheMountSpelling covers issue #22: a Mount= bind mount is
+// labelled with relabel=, which podman-run(1) --mount documents and which
+// Podman 5.8.4 turns into the same :Z or :z a Volume= would carry. The
+// generator passes the value through to --mount unchanged.
+func TestFixQD001WritesTheMountSpelling(t *testing.T) {
+	generator := podmantest.Generator(t)
+
+	dir, _ := writeUnits(t, map[string]string{
+		"web.container": "[Container]\nImage=docker.io/library/nginx:1.27\n" +
+			"Mount=type=bind,source=/srv/web,destination=/data\n[Install]\nWantedBy=default.target\n",
+		"a.container": "[Container]\nImage=docker.io/library/nginx:1.27\nNetwork=host\n" +
+			"Mount=type=bind,src=/srv/s,dst=/data,ro\n[Install]\nWantedBy=default.target\n",
+		"b.container": "[Container]\nImage=docker.io/library/nginx:1.27\nNetwork=host\n" +
+			"Volume=/srv/s:/data\n[Install]\nWantedBy=default.target\n",
+	})
+	fixOnce(t, dir, Options{})
+	once := snapshot(t, dir)
+
+	want := map[string]string{
+		"web.container": "Mount=type=bind,source=/srv/web,destination=/data,relabel=private\n",
+		"a.container":   "Mount=type=bind,src=/srv/s,dst=/data,ro,relabel=shared\n",
+		"b.container":   "Volume=/srv/s:/data:z\n",
+	}
+	for name, line := range want {
+		if !strings.Contains(once[name], "\n"+line) {
+			t.Errorf("%s after fixing:\n%s\nwant it to contain %q", name, once[name], line)
+		}
+	}
+
+	fixOnce(t, dir, Options{})
+	for name, content := range snapshot(t, dir) {
+		if content != once[name] {
+			t.Errorf("%s changed on the second run:\n%s", name, content)
+		}
+	}
+
+	podmantest.AssertAccepts(t, generator, dir)
+	cmd := exec.Command(generator, "-dryrun", "-user")
+	cmd.Env = append(os.Environ(), "QUADLET_UNIT_DIRS="+dir)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generator: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "--mount type=bind,source=/srv/web,destination=/data,relabel=private ") {
+		t.Errorf("the generator did not pass relabel=private through to --mount:\n%s", out)
+	}
+}
+
+func TestFixQD001GuardsMountEntries(t *testing.T) {
+	tests := []struct {
+		name   string
+		line   string
+		option string
+		want   string // empty: declined
+	}{
+		{
+			name: "an unlabelled bind is labelled", option: "Z",
+			line: "Mount=type=bind,source=/s,destination=/d",
+			want: "Mount=type=bind,source=/s,destination=/d,relabel=private",
+		},
+		{
+			name: "a shared label is spelled relabel=shared", option: "z",
+			line: "Mount=type=bind,source=/s,destination=/d,U=true",
+			want: "Mount=type=bind,source=/s,destination=/d,U=true,relabel=shared",
+		},
+		{name: "relabel= already present", option: "Z", line: "Mount=type=bind,source=/s,destination=/d,relabel=shared"},
+		{name: "a bare Z already present", option: "z", line: "Mount=type=bind,source=/s,destination=/d,Z"},
+		{name: "an invalid relabel podman rejects", option: "Z", line: "Mount=type=bind,source=/s,destination=/d,relabel=Private"},
+		{name: "a volume mount", option: "Z", line: "Mount=type=volume,source=v,destination=/d"},
+		{name: "a lowercase mount key", option: "Z", line: "mount=type=bind,source=/s,destination=/d"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lines := parseLines(t, "[Container]", tt.line)
+			finding := rules.Finding{RuleID: "QD001", Line: 2, Fix: map[string]string{"option": tt.option}}
+
+			got, changed := fixQD001(lines, finding)
+			want := tt.want
+			if want == "" {
+				want = tt.line
+			}
+			if changed != (tt.want != "") || got[1].Raw[0] != want {
+				t.Errorf("changed = %v, line = %q; want %q", changed, got[1].Raw[0], want)
+			}
+		})
 	}
 }
 
