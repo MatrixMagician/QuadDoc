@@ -1,0 +1,13 @@
+[Unit]
+Description=joined (from compose service joined)
+
+[Container]
+ContainerName=joined
+Image=docker.io/library/alpine:3.20
+Network=container:legacy
+
+[Service]
+Restart=no
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,13 @@
+[Unit]
+Description=hostnet (from compose service hostnet)
+
+[Container]
+ContainerName=hostnet
+Image=docker.io/library/alpine:3.20
+Network=host
+
+[Service]
+Restart=no
+
+[Install]
+WantedBy=default.target

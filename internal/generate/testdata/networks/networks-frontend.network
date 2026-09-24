@@ -1,0 +1,5 @@
+[Network]
+NetworkName=public_net
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,13 @@
+[Unit]
+Description=isolated (from compose service isolated)
+
+[Container]
+ContainerName=isolated
+Image=docker.io/library/alpine:3.20
+Network=none
+
+[Service]
+Restart=no
+
+[Install]
+WantedBy=default.target

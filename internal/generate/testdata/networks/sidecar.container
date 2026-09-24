@@ -1,0 +1,15 @@
+[Unit]
+Description=sidecar (from compose service sidecar)
+After=web.service
+Requires=web.service
+
+[Container]
+ContainerName=sidecar
+Image=docker.io/library/alpine:3.20
+Network=web.container
+
+[Service]
+Restart=no
+
+[Install]
+WantedBy=default.target

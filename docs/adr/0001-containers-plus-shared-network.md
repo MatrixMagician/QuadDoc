@@ -21,7 +21,20 @@ stylistic preference — it is the only way to preserve compose semantics.
 
 Convert each compose service to its own `.container` unit, and emit one
 `.network` unit per compose network (plus a default project network when compose
-declares none). Each container gets `Network=<project>.network`.
+declares none). Each `.network` unit is called `<project>-<network>.network`,
+so projects sharing a Quadlet search path do not collide.
+
+Each container gets one `Network=` per compose network it joins, carrying the
+per-network `alias=` and `ip=` options, so a service keeps exactly the
+isolation and addresses compose gave it. An external network is joined by its
+real name and gets no unit. A `network_mode` replaces the networks: `host`,
+`none` and `container:NAME` pass through as `Network=` values, and
+`service:NAME` becomes `Network=NAME.container`, which Quadlet resolves to that
+sibling's container and orders after it.
+
+Amended 2026-09-24 (issue #20): conversion originally emitted a single
+`.network` unit and put every container on it, which merged networks compose
+kept apart and dropped `network_mode`.
 
 `--pod` remains available to emit a single `.pod` unit instead, for users who
 want shared-namespace semantics.

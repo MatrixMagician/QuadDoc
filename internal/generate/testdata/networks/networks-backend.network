@@ -1,0 +1,7 @@
+[Network]
+NetworkName=networks_backend
+Internal=true
+Subnet=10.99.0.0/24
+
+[Install]
+WantedBy=default.target

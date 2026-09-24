@@ -42,7 +42,7 @@ func TestConvertEmitsAUnitPerService(t *testing.T) {
 
 	for _, want := range []string{
 		"web.container", "db.container", "cache.container",
-		"pgdata.volume", "cachedata.volume", "webstack-net.network",
+		"pgdata.volume", "cachedata.volume", "webstack-backend.network",
 	} {
 		if _, ok := units[want]; !ok {
 			t.Errorf("no %s was generated; got %v", want, keys(units))
@@ -85,7 +85,7 @@ func TestEveryContainerJoinsTheSharedNetwork(t *testing.T) {
 	units := convertFixture(t, Options{Annotate: true})
 
 	for _, name := range []string{"web.container", "db.container", "cache.container"} {
-		if !strings.Contains(units[name], "Network=webstack-net.network") {
+		if !strings.Contains(units[name], "Network=webstack-backend.network") {
 			t.Errorf("%s does not join the shared network:\n%s", name, units[name])
 		}
 	}
@@ -331,47 +331,79 @@ func TestConversionIsDeterministic(t *testing.T) {
 	}
 }
 
-// convertQuoting converts the quoting fixture without annotations, so the
-// golden files hold only the keys under test.
-func convertQuoting(t *testing.T) []Unit {
+// convertTestdata converts a fixture under testdata/ without annotations, so
+// the golden files hold only the keys under test.
+func convertTestdata(t *testing.T, fixture string) *Result {
 	t.Helper()
-	p, err := compose.Load(filepath.Join("testdata", "quoting", "compose.yaml"))
+	p, err := compose.Load(filepath.Join("testdata", fixture, "compose.yaml"))
 	if err != nil {
 		t.Fatalf("loading fixture: %v", err)
 	}
-	return Convert(p, Options{}).Units
+	return Convert(p, Options{})
 }
 
-// TestQuotingGolden pins how values with spaces, quotes, `%` and `$` are
-// written. The golden directory doubles as generator input, so it can be fed
-// straight to `quadlet -dryrun` when reviewing a change to it.
-func TestQuotingGolden(t *testing.T) {
-	for _, u := range convertQuoting(t) {
-		path := filepath.Join("testdata", "quoting", u.Name)
-		if *update {
-			if err := os.WriteFile(path, []byte(u.Content), 0o644); err != nil {
-				t.Fatalf("writing golden: %v", err)
+// TestGolden pins the units generated for each fixture under testdata/: how
+// values with spaces, quotes, `%` and `$` are written, and how compose
+// networks translate. Each golden directory holds exactly the units generated,
+// so it doubles as generator input and can be fed straight to
+// `quadlet -dryrun` when reviewing a change to it.
+func TestGolden(t *testing.T) {
+	for _, fixture := range []string{"quoting", "networks"} {
+		t.Run(fixture, func(t *testing.T) {
+			dir := filepath.Join("testdata", fixture)
+			got := map[string]string{}
+			for _, u := range convertTestdata(t, fixture).Units {
+				got[u.Name] = u.Content
 			}
-			continue
-		}
-		want, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatalf("reading golden %s (run with -update to create it): %v", path, err)
-		}
-		if u.Content != string(want) {
-			t.Errorf("%s differs from its golden file.\n--- got ---\n%s\n--- want ---\n%s", u.Name, u.Content, want)
-		}
+
+			if *update {
+				stale, _ := filepath.Glob(filepath.Join(dir, "*.*"))
+				for _, path := range stale {
+					if filepath.Base(path) != "compose.yaml" {
+						_ = os.Remove(path)
+					}
+				}
+				for name, content := range got {
+					if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+						t.Fatalf("writing golden: %v", err)
+					}
+				}
+				return
+			}
+
+			entries, err := os.ReadDir(dir)
+			if err != nil {
+				t.Fatalf("reading %s: %v", dir, err)
+			}
+			for _, e := range entries {
+				if e.Name() == "compose.yaml" {
+					continue
+				}
+				if _, ok := got[e.Name()]; !ok {
+					t.Errorf("golden %s was not generated (run with -update to remove it)", e.Name())
+				}
+			}
+			for name, content := range got {
+				want, err := os.ReadFile(filepath.Join(dir, name))
+				if err != nil {
+					t.Errorf("reading golden %s (run with -update to create it): %v", name, err)
+					continue
+				}
+				if content != string(want) {
+					t.Errorf("%s differs from its golden file.\n--- got ---\n%s\n--- want ---\n%s", name, content, want)
+				}
+			}
+		})
 	}
 }
 
-// TestQuotedValuesReachPodmanIntact is the oracle for the quoting: it runs the
-// real generator and checks the argv systemd would hand to podman, after its
-// own unquoting and specifier and variable expansion.
-func TestQuotedValuesReachPodmanIntact(t *testing.T) {
+// dryRun feeds units to the real generator and returns its output.
+func dryRun(t *testing.T, units []Unit) string {
+	t.Helper()
 	generator := podmantest.Generator(t)
 
 	dir := t.TempDir()
-	for _, u := range convertQuoting(t) {
+	for _, u := range units {
 		if err := os.WriteFile(filepath.Join(dir, u.Name), []byte(u.Content), 0o644); err != nil {
 			t.Fatalf("writing %s: %v", u.Name, err)
 		}
@@ -382,6 +414,78 @@ func TestQuotedValuesReachPodmanIntact(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the generator rejected the units: %v\n%s", err, out)
 	}
+	return string(out)
+}
+
+// TestNetworksReachPodmanIntact is the oracle for network translation: the
+// real generator must turn each service's networks and network_mode into the
+// --network arguments compose would have used, and each non-external compose
+// network into a network of its own with its isolation intact.
+func TestNetworksReachPodmanIntact(t *testing.T) {
+	out := dryRun(t, convertTestdata(t, "networks").Units)
+
+	tests := []struct {
+		service string
+		want    [][]string
+		reject  []string
+	}{
+		{service: "hostnet", want: [][]string{{"--network", "host"}}},
+		{service: "isolated", want: [][]string{{"--network", "none"}}},
+		{service: "sidecar", want: [][]string{{"--network", "container:web"}}},
+		{service: "joined", want: [][]string{{"--network", "container:legacy"}}},
+		{service: "web", want: [][]string{
+			{"--network", "networks_backend"},
+			{"--network", "corp_lan"},
+			{"--network", "public_net:alias=www,alias=site"},
+		}},
+		{service: "db", want: [][]string{
+			{"--network", "networks_backend:ip=10.99.0.10"},
+		}},
+		{service: "networks-backend-network", want: [][]string{
+			{"create", "--ignore", "--internal", "--subnet", "10.99.0.0/24", "networks_backend"},
+		}},
+		{service: "networks-frontend-network", want: [][]string{{"create", "--ignore", "public_net"}}, reject: []string{"--internal"}},
+	}
+	for _, tt := range tests {
+		argv := execStartArgv(t, out, tt.service)
+		for _, want := range tt.want {
+			if !containsRun(argv, want) {
+				t.Errorf("%s: argv lacks %q\nargv: %q", tt.service, want, argv)
+			}
+		}
+		for _, reject := range tt.reject {
+			if containsRun(argv, []string{reject}) {
+				t.Errorf("%s: argv has %q\nargv: %q", tt.service, reject, argv)
+			}
+		}
+	}
+
+	// An external network is the user's to create, so no unit may claim it.
+	if strings.Contains(out, "---networks-corp-network.service---") {
+		t.Errorf("the external corp network got a unit of its own:\n%s", out)
+	}
+}
+
+// TestExternalObjectsAreNoted checks that the user is told to create the
+// external objects the units rely on, by their real names.
+func TestExternalObjectsAreNoted(t *testing.T) {
+	var messages []string
+	for _, n := range convertTestdata(t, "networks").Notes {
+		messages = append(messages, n.Message)
+	}
+	all := strings.Join(messages, "\n")
+	for _, want := range []string{"podman network create corp_lan"} {
+		if !strings.Contains(all, want) {
+			t.Errorf("no note says %q; notes were:\n%s", want, all)
+		}
+	}
+}
+
+// TestQuotedValuesReachPodmanIntact is the oracle for the quoting: it runs the
+// real generator and checks the argv systemd would hand to podman, after its
+// own unquoting and specifier and variable expansion.
+func TestQuotedValuesReachPodmanIntact(t *testing.T) {
+	out := dryRun(t, convertTestdata(t, "quoting").Units)
 
 	tests := []struct {
 		service string
@@ -407,7 +511,7 @@ func TestQuotedValuesReachPodmanIntact(t *testing.T) {
 		}},
 	}
 	for _, tt := range tests {
-		argv := execStartArgv(t, string(out), tt.service)
+		argv := execStartArgv(t, out, tt.service)
 		for _, want := range tt.want {
 			if !containsRun(argv, want) {
 				t.Errorf("%s: argv lacks %q\nargv: %q", tt.service, want, argv)
