@@ -308,8 +308,14 @@ func TestBareHostContextMeansLive(t *testing.T) {
 	})
 
 	want, stderr, code := run(t, bin, "lint", "--json", "--host-context=live", units)
-	if stderr != "" || !strings.Contains(want, `"rule": "QD`) {
-		t.Fatalf("--host-context=live failed (exit %d)\nstdout: %s\nstderr: %s", code, want, stderr)
+	if stderr != "" {
+		t.Fatalf("--host-context=live failed (exit %d)\nstderr: %s", code, stderr)
+	}
+	// Whatever this host is, consulting it changes the QD001 finding: confirmed
+	// or dropped where SELinux is enforcing or absent, hedged when not consulted.
+	// So matching the live output is proof the bare flag consulted the host.
+	if hedged, _, _ := run(t, bin, "lint", "--json", units); hedged == want {
+		t.Fatalf("live and unconsulted output are identical, so the test cannot tell them apart:\n%s", want)
 	}
 
 	for _, args := range [][]string{
