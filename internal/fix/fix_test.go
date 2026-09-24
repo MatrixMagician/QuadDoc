@@ -490,7 +490,7 @@ func TestFixQD022GuardsAgainstDuplicateInstall(t *testing.T) {
 func TestFixQD030GuardsAgainstDuplicateNetwork(t *testing.T) {
 	lines := parseLines(t, "[Container]", "Image=nginx")
 
-	once, changed := fixQD030(lines, "shared")
+	once, changed := fixQD030(lines, "shared", "")
 	if !changed {
 		t.Fatal("the network key should have been added")
 	}
@@ -498,7 +498,7 @@ func TestFixQD030GuardsAgainstDuplicateNetwork(t *testing.T) {
 		t.Fatalf("expected one Network= key, got %d: %v", count, once)
 	}
 
-	twice, changed := fixQD030(once, "shared")
+	twice, changed := fixQD030(once, "shared", "")
 	if changed {
 		t.Error("the second application reported a change")
 	}
@@ -528,6 +528,43 @@ func TestFixQD030KeepsAContinuedEntryWhole(t *testing.T) {
 		t.Errorf("a.container after fixing:\n%s\nwant:\n%s", got, want)
 	}
 	podmantest.AssertAccepts(t, generator, dir)
+}
+
+// TestFixQD030ReplacesAnOwnStackNetwork guards issue #41: the fix appended
+// the shared network below Network=pasta, and Podman refuses a second network
+// beside pasta, slirp4netns or private ("cannot set multiple networks without
+// bridge network mode"). The generator accepts the pair, so the test pins the
+// exact line. A bridge with options joins both networks, so it keeps its line.
+func TestFixQD030ReplacesAnOwnStackNetwork(t *testing.T) {
+	generator := podmantest.Generator(t)
+
+	for _, tc := range []struct{ network, want string }{
+		{"pasta", "Network=shared.network\n"},
+		{"slirp4netns", "Network=shared.network\n"},
+		{"private", "Network=shared.network\n"},
+		{"Pasta:--map-gw", "Network=shared.network\n"},
+		{"bridge:ip=10.88.0.10", "Network=bridge:ip=10.88.0.10\nNetwork=shared.network\n"},
+	} {
+		t.Run(tc.network, func(t *testing.T) {
+			dir, _ := writeUnits(t, map[string]string{
+				"a.container": "[Container]\nImage=docker.io/library/nginx:1.27\nNetwork=" + tc.network +
+					"\n\n[Install]\nWantedBy=default.target\n",
+				"b.container": "[Container]\nImage=docker.io/library/nginx:1.27\n\n" +
+					"[Install]\nWantedBy=default.target\n",
+			})
+			fixOnce(t, dir, Options{})
+
+			want := "[Container]\nImage=docker.io/library/nginx:1.27\n" + tc.want +
+				"\n[Install]\nWantedBy=default.target\n"
+			if got := snapshot(t, dir)["a.container"]; got != want {
+				t.Errorf("a.container after fixing:\n%s\nwant:\n%s", got, want)
+			}
+			if again := fixOnce(t, dir, Options{}); len(again.Changes) != 0 {
+				t.Errorf("a second fix changed %d files", len(again.Changes))
+			}
+			podmantest.AssertAccepts(t, generator, dir)
+		})
+	}
 }
 
 // TestFixRefusesToOverwriteANetworkOutsideTheProject guards issue #11: fixing
@@ -712,11 +749,11 @@ func TestFixMatchesSectionNamesExactly(t *testing.T) {
 		t.Errorf("a lowercase [install] should not stop [Install] being added: %v", got)
 	}
 
-	if got, changed := fixQD030(parseLines(t, "[container]", "Image=nginx"), "shared"); changed {
+	if got, changed := fixQD030(parseLines(t, "[container]", "Image=nginx"), "shared", ""); changed {
 		t.Errorf("Network= was written into a lowercase [container]: %v", got)
 	}
 
-	got, changed = fixQD030(parseLines(t, "[Container]", "Image=nginx", "network=shared.network"), "shared")
+	got, changed = fixQD030(parseLines(t, "[Container]", "Image=nginx", "network=shared.network"), "shared", "")
 	if !changed || countOccurrences(got, "Network=shared.network") != 1 {
 		t.Errorf("a lowercase network= key should not count as wired in: %v", got)
 	}

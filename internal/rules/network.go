@@ -169,11 +169,13 @@ func checkQD030(c *Context) []Finding {
 		}
 
 		where, join := "is on the default network, where DNS is disabled", "then in each container unit:"
+		var fix map[string]string
 		if own := ownStack(u); own != "" {
 			// Podman refuses another network beside a user-mode stack, so
 			// the line has to go, not gain a sibling.
 			where = fmt.Sprintf("uses Network=%s, a network stack of its own with no DNS", own)
 			join = fmt.Sprintf("then in each container unit, and in this one replacing Network=%s:", own)
+			fix = map[string]string{"replace": own}
 		}
 
 		findings = append(findings, Finding{
@@ -194,6 +196,7 @@ func checkQD030(c *Context) []Finding {
 				"Podman's default network reports dns_enabled: false, so this is required "+
 				"for sibling names to resolve at all, not merely tidier.",
 				defaultNetworkName(c), defaultNetworkName(c), join, defaultNetworkName(c)),
+			Fix: fix,
 		})
 	}
 	return findings
