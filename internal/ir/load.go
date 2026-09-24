@@ -223,7 +223,7 @@ func ParsePort(value string, line int) (Port, bool) {
 	switch len(fields) {
 	case 1:
 		// Container port only: Podman picks a random host port.
-		n, err := strconv.Atoi(strings.TrimSpace(fields[0]))
+		n, err := portNumber(fields[0])
 		if err != nil {
 			return p, false
 		}
@@ -234,10 +234,10 @@ func ParsePort(value string, line int) (Port, bool) {
 		if p.HostIP == "" && !isNumeric(host) && host != "" {
 			// A bare address with no host port, e.g. `127.0.0.1::80`.
 			p.HostIP = host
-		} else if n, err := strconv.Atoi(strings.TrimSpace(host)); err == nil {
+		} else if n, err := portNumber(host); err == nil {
 			p.HostPort = n
 		}
-		n, err := strconv.Atoi(strings.TrimSpace(container))
+		n, err := portNumber(container)
 		if err != nil {
 			return p, false
 		}
@@ -247,10 +247,10 @@ func ParsePort(value string, line int) (Port, bool) {
 		if p.HostIP == "" {
 			p.HostIP = fields[0]
 		}
-		if n, err := strconv.Atoi(strings.TrimSpace(fields[1])); err == nil {
+		if n, err := portNumber(fields[1]); err == nil {
 			p.HostPort = n
 		}
-		n, err := strconv.Atoi(strings.TrimSpace(fields[2]))
+		n, err := portNumber(fields[2])
 		if err != nil {
 			return p, false
 		}
@@ -264,8 +264,15 @@ func isNumeric(s string) bool {
 	if s == "" {
 		return false
 	}
-	_, err := strconv.Atoi(strings.TrimSpace(s))
+	_, err := portNumber(s)
 	return err == nil
+}
+
+// portNumber parses one port field. A range such as `80-81` yields its low
+// bound, which is the port a privilege check cares about.
+func portNumber(s string) (int, error) {
+	low, _, _ := strings.Cut(strings.TrimSpace(s), "-")
+	return strconv.Atoi(low)
 }
 
 // parseEnv decomposes an `Environment=` value, which may carry several
