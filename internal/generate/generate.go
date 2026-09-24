@@ -142,7 +142,7 @@ func pair(key, value string) string {
 func jsonArray(words []string) string {
 	var b bytes.Buffer
 	enc := json.NewEncoder(&b)
-	// `&&` reads better than `&&`, and Podman decodes either.
+	// Without this, & is written as \u0026; Podman decodes either, but a human reads &&.
 	enc.SetEscapeHTML(false)
 	_ = enc.Encode(words) // a []string always encodes
 	return strings.TrimSuffix(b.String(), "\n")
