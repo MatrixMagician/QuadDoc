@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -100,10 +101,11 @@ func Apply(project *ir.Project, findings []rules.Finding, opts Options) (*Result
 	sort.Strings(paths)
 
 	for _, path := range paths {
-		change, err := fixFile(project, path, byUnit[path], networkUnit)
+		change, unfixed, err := fixFile(project, path, byUnit[path], networkUnit)
 		if err != nil {
 			return nil, err
 		}
+		result.Unfixed = append(result.Unfixed, unfixed...)
 		if change.Modified() {
 			result.Changes = append(result.Changes, change)
 		}
@@ -171,27 +173,27 @@ WantedBy=default.target
 	return Change{Path: path, After: content, Created: true, Rules: []string{"QD030"}}, nil
 }
 
-// fixFile applies every fixable finding for one file.
-func fixFile(project *ir.Project, path string, findings []rules.Finding, networkUnit string) (Change, error) {
+// fixFile applies every fixable finding for one file. Findings whose fix
+// declines are returned as unfixed, so the user still hears about them.
+func fixFile(project *ir.Project, path string, findings []rules.Finding, networkUnit string) (Change, []rules.Finding, error) {
 	original, err := os.ReadFile(path)
 	if err != nil {
-		return Change{}, fmt.Errorf("reading %s: %w", path, err)
+		return Change{}, nil, fmt.Errorf("reading %s: %w", path, err)
 	}
 
 	parsed, err := quadlet.Parse(path, strings.NewReader(string(original)))
 	if err != nil {
-		return Change{}, err
+		return Change{}, nil, err
 	}
 
-	// Sort findings by line, descending, so that edits do not disturb the
-	// line numbers of edits not yet applied.
-	sorted := append([]rules.Finding(nil), findings...)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Line > sorted[j].Line })
-
-	lines := renderLines(parsed)
+	// The fixes work in logical lines, so a continued entry is never split,
+	// and each keeps the physical line Number it was parsed at, so an
+	// insertion does not shift the line a later finding cites.
+	lines := parsed.Lines
 	applied := map[string]bool{}
+	var unfixed []rules.Finding
 
-	for _, f := range sorted {
+	for _, f := range findings {
 		var changed bool
 		switch f.RuleID {
 		case "QD001":
@@ -203,8 +205,11 @@ func fixFile(project *ir.Project, path string, findings []rules.Finding, network
 		}
 		if changed {
 			applied[f.RuleID] = true
+		} else {
+			unfixed = append(unfixed, f)
 		}
 	}
+	parsed.Lines = lines
 
 	ruleIDs := make([]string, 0, len(applied))
 	for id := range applied {
@@ -215,27 +220,17 @@ func fixFile(project *ir.Project, path string, findings []rules.Finding, network
 	return Change{
 		Path:   path,
 		Before: string(original),
-		After:  strings.Join(lines, "\n") + trailing(string(original)),
+		After:  parsed.Render(),
 		Rules:  ruleIDs,
-	}, nil
+	}, unfixed, nil
 }
 
-// renderLines flattens a parsed file back to physical lines, which is the unit
-// the fixes work in.
-func renderLines(f *quadlet.File) []string {
-	var lines []string
-	for _, l := range f.Lines {
-		lines = append(lines, l.Raw...)
+// entry builds a new single-line Key=value line for a fix to insert.
+func entry(section, key, value string) quadlet.Line {
+	return quadlet.Line{
+		Kind: quadlet.LineEntry, Raw: []string{key + "=" + value},
+		Section: section, Key: key, Value: value,
 	}
-	return lines
-}
-
-// trailing preserves whether the original file ended with a newline.
-func trailing(original string) string {
-	if strings.HasSuffix(original, "\n") {
-		return "\n"
-	}
-	return ""
 }
 
 // fixQD001 appends the SELinux relabelling option to a Volume= line.
@@ -243,20 +238,19 @@ func trailing(original string) string {
 // The option to use was decided by the rule, which had the project-wide sharing
 // map; the fix does not re-derive it. That is what keeps the fix from writing a
 // :Z that QD002 would then flag.
-func fixQD001(lines []string, f rules.Finding) ([]string, bool) {
-	idx := f.Line - 1
-	if idx < 0 || idx >= len(lines) {
+func fixQD001(lines []quadlet.Line, f rules.Finding) ([]quadlet.Line, bool) {
+	idx := slices.IndexFunc(lines, func(l quadlet.Line) bool {
+		return l.Kind == quadlet.LineEntry && l.Number == f.Line
+	})
+	// A continued Volume= is left alone: the option belongs at the end of the
+	// value, and rewriting a continuation is not worth the risk of splitting it.
+	if idx < 0 || len(lines[idx].Raw) != 1 || !strings.EqualFold(lines[idx].Key, "Volume") {
 		return lines, false
 	}
-
-	line := lines[idx]
-	key, value, ok := strings.Cut(line, "=")
-	if !ok || !strings.EqualFold(strings.TrimSpace(key), "Volume") {
-		return lines, false
-	}
+	l := lines[idx]
 
 	// Idempotence: a line that already carries a label is left alone.
-	if hasLabelOption(value) {
+	if hasLabelOption(l.Value) {
 		return lines, false
 	}
 
@@ -265,7 +259,10 @@ func fixQD001(lines []string, f rules.Finding) ([]string, bool) {
 		return lines, false
 	}
 
-	lines[idx] = key + "=" + appendOption(value, option)
+	key, _, _ := strings.Cut(l.Raw[0], "=")
+	l.Value = appendOption(l.Value, option)
+	l.Raw = []string{key + "=" + l.Value}
+	lines[idx] = l
 	return lines, true
 }
 
@@ -296,73 +293,57 @@ func appendOption(value, option string) string {
 }
 
 // fixQD022 appends an [Install] section.
-func fixQD022(lines []string) ([]string, bool) {
+func fixQD022(lines []quadlet.Line) ([]quadlet.Line, bool) {
 	// Idempotence: if the section already has a key, there is nothing to do.
-	inInstall := false
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "[") {
-			inInstall = strings.EqualFold(trimmed, "[Install]")
-			continue
-		}
-		if inInstall && strings.Contains(trimmed, "=") {
+	// A commented-out key is not a key.
+	for _, l := range lines {
+		if l.Kind == quadlet.LineEntry && strings.EqualFold(l.Section, "Install") {
 			return lines, false
 		}
 	}
 
-	// Append to an existing empty [Install], or add the whole section.
-	for i, line := range lines {
-		if strings.EqualFold(strings.TrimSpace(line), "[Install]") {
-			rest := append([]string{"WantedBy=default.target"}, lines[i+1:]...)
-			return append(lines[:i+1], rest...), true
+	wantedBy := entry("Install", "WantedBy", "default.target")
+
+	// Fill in an existing empty [Install], or add the whole section.
+	for i, l := range lines {
+		if l.Kind == quadlet.LineSection && strings.EqualFold(l.Section, "Install") {
+			return slices.Insert(lines, i+1, wantedBy), true
 		}
 	}
 
-	out := append([]string{}, lines...)
-	if len(out) > 0 && strings.TrimSpace(out[len(out)-1]) != "" {
-		out = append(out, "")
+	if n := len(lines); n > 0 && lines[n-1].Kind != quadlet.LineBlank {
+		lines = append(lines, quadlet.Line{Kind: quadlet.LineBlank, Raw: []string{""}})
 	}
-	return append(out, "[Install]", "WantedBy=default.target"), true
+	header := quadlet.Line{Kind: quadlet.LineSection, Raw: []string{"[Install]"}, Section: "Install"}
+	return append(lines, header, wantedBy), true
 }
 
 // fixQD030 adds a Network= key to a container unit.
-func fixQD030(lines []string, networkUnit string) ([]string, bool) {
+func fixQD030(lines []quadlet.Line, networkUnit string) ([]quadlet.Line, bool) {
 	if networkUnit == "" {
 		return lines, false
 	}
-	want := "Network=" + networkUnit + ".network"
+	want := networkUnit + ".network"
 
-	// Idempotence: already wired in.
-	for _, line := range lines {
-		if strings.TrimSpace(line) == want {
-			return lines, false
-		}
-	}
-
-	// Insert at the end of the [Container] section, so the key lands where a
-	// human would have put it.
+	// Insert after the last entry of the [Container] section, so the key lands
+	// where a human would have put it and never inside a continued entry.
 	insertAt := -1
-	inContainer := false
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "[") {
-			if inContainer {
-				break
-			}
-			inContainer = strings.EqualFold(trimmed, "[Container]")
+	for i, l := range lines {
+		if !strings.EqualFold(l.Section, "Container") {
 			continue
 		}
-		if inContainer && strings.Contains(trimmed, "=") {
+		// Idempotence: already wired in.
+		if l.Kind == quadlet.LineEntry && strings.EqualFold(l.Key, "Network") && l.Value == want {
+			return lines, false
+		}
+		if l.Kind == quadlet.LineSection || l.Kind == quadlet.LineEntry {
 			insertAt = i + 1
 		}
 	}
 	if insertAt < 0 {
 		return lines, false
 	}
-
-	out := append([]string{}, lines[:insertAt]...)
-	out = append(out, want)
-	return append(out, lines[insertAt:]...), true
+	return slices.Insert(lines, insertAt, entry("Container", "Network", want)), true
 }
 
 // Write applies the changes to disk.
