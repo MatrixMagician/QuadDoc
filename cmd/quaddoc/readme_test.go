@@ -1,7 +1,6 @@
 package main
 
 import (
-	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,7 +9,10 @@ import (
 	"testing"
 )
 
-var update = flag.Bool("update", false, "rewrite golden files")
+// update rewrites golden files. It is an environment variable, not a flag,
+// because `go test ./...` passes a flag to every package and the packages
+// without golden files reject it (#52).
+var update = os.Getenv("QUADDOC_UPDATE_GOLDEN") == "1"
 
 // TestReadmeWalkthrough runs the README's compose file through convert, lint,
 // and fix, and checks the result two ways. The full transcript is compared
@@ -76,12 +78,13 @@ func fixedLengthDir(t *testing.T, n int) string {
 	return dir
 }
 
-// golden compares output against a checked-in file, rewriting it under -update.
+// golden compares output against a checked-in file, rewriting it under
+// QUADDOC_UPDATE_GOLDEN=1.
 func golden(t *testing.T, name string, got []byte) {
 	t.Helper()
 	path := filepath.Join("testdata", name)
 
-	if *update {
+	if update {
 		if err := os.MkdirAll("testdata", 0o755); err != nil {
 			t.Fatalf("creating testdata: %v", err)
 		}
@@ -93,9 +96,9 @@ func golden(t *testing.T, name string, got []byte) {
 
 	want, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("reading golden %s (run `go test ./cmd/quaddoc -update` to create it): %v", path, err)
+		t.Fatalf("reading golden %s (run `QUADDOC_UPDATE_GOLDEN=1 go test ./cmd/quaddoc` to create it): %v", path, err)
 	}
 	if string(want) != string(got) {
-		t.Errorf("%s is out of date; run `go test ./cmd/quaddoc -update`, then update the README walkthrough to match\ngot:\n%s", path, got)
+		t.Errorf("%s is out of date; run `QUADDOC_UPDATE_GOLDEN=1 go test ./cmd/quaddoc`, then update the README walkthrough to match\ngot:\n%s", path, got)
 	}
 }

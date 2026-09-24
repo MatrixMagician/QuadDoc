@@ -1,7 +1,6 @@
 package generate
 
 import (
-	"flag"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,7 +14,10 @@ import (
 	"github.com/MatrixMagician/quaddoc/internal/podmantest"
 )
 
-var update = flag.Bool("update", false, "rewrite golden files")
+// update rewrites golden files. It is an environment variable, not a flag,
+// because `go test ./...` passes a flag to every package and the packages
+// without golden files reject it (#52).
+var update = os.Getenv("QUADDOC_UPDATE_GOLDEN") == "1"
 
 // fixtureProject loads the shared web-stack fixture.
 func fixtureProject(t *testing.T) *compose.Project {
@@ -363,7 +365,7 @@ func TestGolden(t *testing.T) {
 				got[u.Name] = u.Content
 			}
 
-			if *update {
+			if update {
 				stale, _ := filepath.Glob(filepath.Join(dir, "*.*"))
 				for _, path := range stale {
 					if filepath.Base(path) != "compose.yaml" {
@@ -387,13 +389,13 @@ func TestGolden(t *testing.T) {
 					continue
 				}
 				if _, ok := got[e.Name()]; !ok {
-					t.Errorf("golden %s was not generated (run with -update to remove it)", e.Name())
+					t.Errorf("golden %s was not generated (run with QUADDOC_UPDATE_GOLDEN=1 to remove it)", e.Name())
 				}
 			}
 			for name, content := range got {
 				want, err := os.ReadFile(filepath.Join(dir, name))
 				if err != nil {
-					t.Errorf("reading golden %s (run with -update to create it): %v", name, err)
+					t.Errorf("reading golden %s (run with QUADDOC_UPDATE_GOLDEN=1 to create it): %v", name, err)
 					continue
 				}
 				if content != string(want) {
