@@ -89,15 +89,15 @@ The rule engine must make adding a rule a single-file affair: rule struct + test
 ## 5. CLI Design
 
 ```
-quaddoc convert <compose.yaml> [--out units/] [--pod|--containers]
-quaddoc lint <path…> [--host-context[=captured-dir]] [--json|--sarif]
+quaddoc convert <compose.yaml> [--out units/] [--pod]
+quaddoc lint <path…> [--host-context[=captured-dir]] [--json|--sarif] [--explain] [--disable QD001,…]
 quaddoc fix <path…> [--rule QD001,…] [--write]     # diff preview by default
 quaddoc capture-context [--out ctx/]                # for replay linting
 quaddoc rules [QD###]                               # rendered rule docs
-quaddoc doctor                                      # self-check: podman/selinux versions detected
+quaddoc doctor                                      # reports what quaddoc detects on this system
 ```
 
-Exit codes: 0 clean, 1 warnings only (configurable gate), 2 errors — CI-friendly; `.quaddoc.toml` for per-project rule enables/severity overrides with inline `# quaddoc: disable=QD001 reason…` escapes (reason mandatory).
+Exit codes: 0 clean, 1 warnings only, 2 errors — CI-friendly; `.quaddoc.toml` for per-project rule enables/severity overrides with inline `# quaddoc: disable=QD001 reason…` escapes (reason mandatory).
 
 ---
 

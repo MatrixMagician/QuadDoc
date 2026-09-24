@@ -213,8 +213,11 @@ func TestSARIFStructure(t *testing.T) {
 	if log.Version != "2.1.0" {
 		t.Errorf("version = %q, want 2.1.0", log.Version)
 	}
-	if !strings.HasSuffix(log.Schema, "sarif-schema-2.1.0.json") {
-		t.Errorf("schema = %q, want the 2.1.0 schema", log.Schema)
+	// schemastore.org resolves; the old oasis-tcs raw.githubusercontent.com URL
+	// this once pointed at 404s.
+	const wantSchema = "https://json.schemastore.org/sarif-2.1.0.json"
+	if log.Schema != wantSchema {
+		t.Errorf("schema = %q, want %q", log.Schema, wantSchema)
 	}
 	if len(log.Runs) != 1 {
 		t.Fatalf("runs = %d, want 1", len(log.Runs))

@@ -16,7 +16,7 @@ import (
 // The schema is SARIF 2.1.0, an OASIS standard.
 const (
 	sarifVersion = "2.1.0"
-	sarifSchema  = "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json"
+	sarifSchema  = "https://json.schemastore.org/sarif-2.1.0.json"
 )
 
 type sarifLog struct {

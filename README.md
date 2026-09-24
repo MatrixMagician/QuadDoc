@@ -147,7 +147,7 @@ detected about your system and how many rules it is carrying.
 
 ```
 quaddoc convert <compose.yaml> [--out units/] [--pod]
-quaddoc lint <path...> [--host-context[=dir]] [--json|--sarif] [--explain]
+quaddoc lint <path...> [--host-context[=dir]] [--json|--sarif] [--explain] [--disable QD001,...]
 quaddoc fix <path...> [--rule QD001,...] [--write]
 quaddoc capture-context [--out ctx/]
 quaddoc doctor
@@ -189,6 +189,7 @@ carry secrets.
 
 ```yaml
 - run: quaddoc lint --sarif units/ > quaddoc.sarif
+  continue-on-error: true   # lint exits 1/2 on findings; the upload step must still run
 - uses: github/codeql-action/upload-sarif@v3
   with:
     sarif_file: quaddoc.sarif
