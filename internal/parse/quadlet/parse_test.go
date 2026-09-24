@@ -63,10 +63,10 @@ func TestRepeatedKeysAreAList(t *testing.T) {
 	}
 }
 
-func TestContinuationJoinsWithSpace(t *testing.T) {
+func TestContinuationKeepsTheSpaceBeforeTheBackslash(t *testing.T) {
 	// Verified against Podman 5.8.4: a continued PodmanArgs= reaches the
-	// generated ExecStart as `--label app=web tier=front`, so fragments are
-	// joined with a single space.
+	// generated ExecStart as `--label app=web tier=front`. The spaces come
+	// from before each backslash; the generator adds none of its own.
 	f, _ := parseFixture(t, "web.container")
 
 	got, ok := f.Lookup("Container", "PodmanArgs")
@@ -207,15 +207,81 @@ func TestLineNumbersAreReported(t *testing.T) {
 	t.Fatal("PodmanArgs entry not found")
 }
 
-func TestEscapedBackslashDoesNotContinue(t *testing.T) {
-	// An even number of trailing backslashes is an escaped backslash, not a
-	// continuation marker.
-	f, err := Parse("mem", strings.NewReader("[Container]\nExec=printf 'a\\\\'\nImage=busybox\n"))
+func TestContinuationMatchesTheGenerator(t *testing.T) {
+	// Each case was checked against /usr/libexec/podman/quadlet -dryrun
+	// (Podman 5.8.4) by reading the generated ExecStart.
+	tests := []struct {
+		name       string
+		text       string
+		wantValue  string
+		wantVolume bool
+	}{
+		{
+			name: "comment and blank lines inside a continuation are skipped",
+			text: `[Container]
+Exec=echo one \
+# c1
+  ; c2
+  two \
+
+  three
+Volume=/a:/a
+`,
+			wantValue:  "echo one two three",
+			wantVolume: true,
+		},
+		{
+			name: "fragments are concatenated with leading space trimmed",
+			text: `[Container]
+Exec=ab \
+   cd\
+ef
+`,
+			wantValue: "ab cdef",
+		},
+		{
+			name:      "whitespace after the backslash still continues",
+			text:      "[Container]\nExec=ab\\  \ncd\n",
+			wantValue: "abcd",
+		},
+		{
+			// Quadlet does not treat a doubled backslash as an escape here: the
+			// next line is swallowed, and the Volume= with it.
+			name: "a doubled trailing backslash still continues",
+			text: `[Container]
+Exec=echo one two \\
+Volume=/srv/x:/x
+`,
+			wantValue: `echo one two \Volume=/srv/x:/x`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, err := Parse("mem", strings.NewReader(tt.text))
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if got, _ := f.Lookup("Container", "Exec"); got != tt.wantValue {
+				t.Errorf("Exec = %q, want %q", got, tt.wantValue)
+			}
+			if _, ok := f.Lookup("Container", "Volume"); ok != tt.wantVolume {
+				t.Errorf("Volume present = %v, want %v", ok, tt.wantVolume)
+			}
+			if got := f.Render(); got != tt.text {
+				t.Errorf("Render = %q, want the input back", got)
+			}
+		})
+	}
+}
+
+func TestLineNumbersSurviveSkippedContinuationLines(t *testing.T) {
+	f, err := Parse("mem", strings.NewReader("[Container]\nExec=a \\\n# c\n  b\nVolume=/a:/a\n"))
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if _, ok := f.Lookup("Container", "Image"); !ok {
-		t.Error("Image was swallowed as a continuation of the escaped backslash")
+	if got := f.Entries(); len(got) != 2 || got[1].Key != "Volume" || got[1].Line != 5 {
+		t.Errorf("entries = %+v, want Volume second, on line 5", got)
 	}
 }
 

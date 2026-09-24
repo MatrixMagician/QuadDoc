@@ -107,9 +107,9 @@ p='$P/rules.go'; s=open(p).read()
 s=s.replace('\tcase Warning:\n\t\treturn 1','\tcase Warning:\n\t\treturn 0')
 open(p,'w').write(s)"
 
-run_mutation "parser joins continuations without a space" "internal/parse/quadlet/parse.go" ./internal/parse/quadlet "
+run_mutation "parser folds comments into a continuation" "internal/parse/quadlet/parse.go" ./internal/parse/quadlet "
 p='internal/parse/quadlet/parse.go'; s=open(p).read()
-s=s.replace('strings.Join(kept, \" \")','strings.Join(kept, \"\")')
+s=s.replace('\t\tif !skipped(more) {','\t\tif strings.TrimSpace(more) != \"\" {')
 open(p,'w').write(s)"
 
 run_mutation "parser treats repeated keys as last-wins" "internal/parse/quadlet/parse.go" ./internal/parse/quadlet "
