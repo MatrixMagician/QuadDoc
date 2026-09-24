@@ -317,7 +317,8 @@ func portNumber(s string) (int, error) {
 }
 
 // parseEnv decomposes an `Environment=` value, which may carry several
-// space-separated assignments on one line.
+// space-separated assignments on one line, each optionally quoted per
+// systemd.syntax(7) (either the value alone or the whole NAME=value pair).
 func parseEnv(value string, line int) []EnvVar {
 	var out []EnvVar
 	for _, field := range splitEnvFields(value) {
@@ -325,32 +326,40 @@ func parseEnv(value string, line int) []EnvVar {
 		if !found {
 			continue
 		}
-		out = append(out, EnvVar{
-			Name:  strings.TrimSpace(name),
-			Value: strings.Trim(strings.TrimSpace(val), `"'`),
-			Line:  line,
-		})
+		out = append(out, EnvVar{Name: name, Value: val, Line: line})
 	}
 	return out
 }
 
-// splitEnvFields splits on whitespace but keeps quoted runs together, so
-// `Environment=A=1 B="two words"` yields two assignments rather than three.
+// splitEnvFields splits value into already-unquoted `name=value` words per
+// systemd.syntax(7): whitespace separates assignments unless inside a quoted
+// run, and a backslash escapes the following character, including a quote,
+// which then does not end the run. Verified against Podman 5.8.4's Quadlet
+// generator (`quadlet -dryrun`): `A="x y" B=z`, `"K=v w"` and
+// `Q="say \"hi\""` each split and unquote exactly as its `--env` argument
+// does. Quotes and escaping backslashes are consumed, not kept, so the
+// result needs no further trimming.
 func splitEnvFields(value string) []string {
 	var fields []string
 	var cur strings.Builder
 	var quote rune
+	escaped := false
 
 	for _, r := range value {
 		switch {
+		case escaped:
+			cur.WriteRune(r)
+			escaped = false
+		case r == '\\':
+			escaped = true
 		case quote != 0:
 			if r == quote {
 				quote = 0
+			} else {
+				cur.WriteRune(r)
 			}
-			cur.WriteRune(r)
 		case r == '"' || r == '\'':
 			quote = r
-			cur.WriteRune(r)
 		case r == ' ' || r == '\t':
 			if cur.Len() > 0 {
 				fields = append(fields, cur.String())

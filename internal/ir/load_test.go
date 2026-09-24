@@ -210,6 +210,33 @@ GroupAdd=
 	}
 }
 
+func TestFromParsedHandlesQuotedEnvironment(t *testing.T) {
+	// Verified against Podman 5.8.4: both lines produce `--env DB_PASSWORD=secret
+	// value` and `--env QUOTED=say "hi"` respectively (systemd.syntax(7) quoting).
+	f, err := quadlet.Parse("app.container", strings.NewReader(`[Container]
+Image=nginx
+Environment="DB_PASSWORD=secret value"
+Environment=QUOTED="say \"hi\""
+`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	u := FromParsed(f)
+
+	want := []EnvVar{
+		{Name: "DB_PASSWORD", Value: "secret value", Line: 3},
+		{Name: "QUOTED", Value: `say "hi"`, Line: 4},
+	}
+	if len(u.Environment) != len(want) {
+		t.Fatalf("environment = %+v, want %+v", u.Environment, want)
+	}
+	for i, e := range want {
+		if u.Environment[i] != e {
+			t.Errorf("environment[%d] = %+v, want %+v", i, u.Environment[i], e)
+		}
+	}
+}
+
 func TestLowercaseSectionsAndKeysAreNotModelled(t *testing.T) {
 	// Verified against Podman 5.8.4: the generator matches section and key
 	// names exactly, so neither unit has an Image, and [service] carries no

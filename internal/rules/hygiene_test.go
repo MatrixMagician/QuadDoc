@@ -186,6 +186,13 @@ func TestQD041(t *testing.T) {
 			text:         "[Container]\nImage=app\nEnvironment=DB_PASSWORD=abc API_TOKEN=xyz\n",
 			wantFindings: 2,
 		},
+		{
+			// systemd.syntax(7) permits quoting the whole pair, not just the
+			// value: `Environment="DB_PASSWORD=secret value"`.
+			name:         "a whole-pair-quoted secret is reported",
+			text:         "[Container]\nImage=app\nEnvironment=\"DB_PASSWORD=secret value\"\n",
+			wantFindings: 1,
+		},
 	}
 
 	for _, tt := range tests {
@@ -212,5 +219,21 @@ func TestQD041RemediationNamesTheVariable(t *testing.T) {
 	if !strings.Contains(got[0].Remediation, "POSTGRES_PASSWORD") ||
 		!strings.Contains(got[0].Remediation, "Secret=") {
 		t.Errorf("remediation is not actionable: %q", got[0].Remediation)
+	}
+}
+
+func TestQD041RemediationOnAWholePairQuotedSecret(t *testing.T) {
+	// Before the Environment= quoting fix, the leading `"` stayed on the
+	// name, so this produced `Secret="db_password,...` instead of the
+	// variable's real, unquoted name.
+	u := unitFromText(t, "db.container",
+		"[Container]\nImage=postgres\nEnvironment=\"DB_PASSWORD=secret value\"\n")
+	got := runRule(t, "QD041", hostctx.Unknown{}, u)
+
+	if len(got) != 1 {
+		t.Fatalf("findings = %d, want 1: %+v", len(got), got)
+	}
+	if !strings.Contains(got[0].Remediation, "Secret=db_password,type=env,target=DB_PASSWORD") {
+		t.Errorf("remediation = %q, want it to name the unquoted variable DB_PASSWORD", got[0].Remediation)
 	}
 }
