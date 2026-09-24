@@ -1,0 +1,26 @@
+[Unit]
+Description=app (from compose service app)
+
+[Container]
+ContainerName=app
+Image=docker.io/library/alpine:3.20
+Entrypoint=["/bin/sh","-c"]
+Exec="echo \"$$0\" \"$$1\"; sleep inf" "hello world" &&
+Environment=DATE_FMT=%%Y-%%m-%%d
+Environment=DOLLAR="cost $$HOME"
+Environment=GREETING="hello world"
+Environment=HOMEISH=50%%h
+Environment=PCT=100%%
+Environment=PLAIN=plain
+Environment=QUOTED="say \"hi\""
+Network=quoting-net.network
+Sysctl=net.ipv4.ping_group_range="0 1000"
+Label=description="a label with spaces"
+HealthCmd=["CMD","test","-f","/tmp/my file"]
+HealthInterval=30s
+
+[Service]
+Restart=no
+
+[Install]
+WantedBy=default.target

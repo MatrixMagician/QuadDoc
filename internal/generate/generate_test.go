@@ -1,14 +1,19 @@
 package generate
 
 import (
-	"github.com/MatrixMagician/quaddoc/internal/podmantest"
+	"flag"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/MatrixMagician/quaddoc/internal/parse/compose"
+	"github.com/MatrixMagician/quaddoc/internal/podmantest"
 )
+
+var update = flag.Bool("update", false, "rewrite golden files")
 
 // fixtureProject loads the shared web-stack fixture.
 func fixtureProject(t *testing.T) *compose.Project {
@@ -91,7 +96,7 @@ func TestHealthcheckIsTranslatedInFull(t *testing.T) {
 	db := units["db.container"]
 
 	for _, want := range []string{
-		"HealthCmd=pg_isready -U postgres",
+		`HealthCmd=["CMD","pg_isready","-U","postgres"]`,
 		"HealthInterval=10s",
 		"HealthTimeout=5s",
 		"HealthStartPeriod=30s",
@@ -297,7 +302,7 @@ func TestHealthCommand(t *testing.T) {
 		test []string
 		want string
 	}{
-		{name: "CMD form", test: []string{"CMD", "pg_isready", "-U", "postgres"}, want: "pg_isready -U postgres"},
+		{name: "CMD form", test: []string{"CMD", "pg_isready", "-U", "postgres"}, want: `["CMD","pg_isready","-U","postgres"]`},
 		{name: "CMD-SHELL form", test: []string{"CMD-SHELL", "curl -f http://localhost/ || exit 1"}, want: "curl -f http://localhost/ || exit 1"},
 		{name: "NONE disables", test: []string{"NONE"}, want: ""},
 		{name: "empty", test: nil, want: ""},
@@ -324,6 +329,159 @@ func TestConversionIsDeterministic(t *testing.T) {
 			}
 		}
 	}
+}
+
+// convertQuoting converts the quoting fixture without annotations, so the
+// golden files hold only the keys under test.
+func convertQuoting(t *testing.T) []Unit {
+	t.Helper()
+	p, err := compose.Load(filepath.Join("testdata", "quoting", "compose.yaml"))
+	if err != nil {
+		t.Fatalf("loading fixture: %v", err)
+	}
+	return Convert(p, Options{}).Units
+}
+
+// TestQuotingGolden pins how values with spaces, quotes, `%` and `$` are
+// written. The golden directory doubles as generator input, so it can be fed
+// straight to `quadlet -dryrun` when reviewing a change to it.
+func TestQuotingGolden(t *testing.T) {
+	for _, u := range convertQuoting(t) {
+		path := filepath.Join("testdata", "quoting", u.Name)
+		if *update {
+			if err := os.WriteFile(path, []byte(u.Content), 0o644); err != nil {
+				t.Fatalf("writing golden: %v", err)
+			}
+			continue
+		}
+		want, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("reading golden %s (run with -update to create it): %v", path, err)
+		}
+		if u.Content != string(want) {
+			t.Errorf("%s differs from its golden file.\n--- got ---\n%s\n--- want ---\n%s", u.Name, u.Content, want)
+		}
+	}
+}
+
+// TestQuotedValuesReachPodmanIntact is the oracle for the quoting: it runs the
+// real generator and checks the argv systemd would hand to podman, after its
+// own unquoting and specifier and variable expansion.
+func TestQuotedValuesReachPodmanIntact(t *testing.T) {
+	generator := podmantest.Generator(t)
+
+	dir := t.TempDir()
+	for _, u := range convertQuoting(t) {
+		if err := os.WriteFile(filepath.Join(dir, u.Name), []byte(u.Content), 0o644); err != nil {
+			t.Fatalf("writing %s: %v", u.Name, err)
+		}
+	}
+	cmd := exec.Command(generator, "-dryrun", "-user")
+	cmd.Env = append(os.Environ(), "QUADLET_UNIT_DIRS="+dir)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("the generator rejected the units: %v\n%s", err, out)
+	}
+
+	tests := []struct {
+		service string
+		want    [][]string
+	}{
+		{service: "app", want: [][]string{
+			{`--entrypoint=["/bin/sh","-c"]`},
+			{"--env", "DATE_FMT=%Y-%m-%d"},
+			{"--env", "DOLLAR=cost $HOME"},
+			{"--env", "GREETING=hello world"},
+			{"--env", "HOMEISH=50%h"},
+			{"--env", "PCT=100%"},
+			{"--env", `QUOTED=say "hi"`},
+			{"--sysctl", "net.ipv4.ping_group_range=0 1000"},
+			{"--label", "description=a label with spaces"},
+			{"--health-cmd", `["CMD","test","-f","/tmp/my file"]`},
+			{"docker.io/library/alpine:3.20", `echo "$0" "$1"; sleep inf`, "hello world", "&&"},
+		}},
+		{service: "shell", want: [][]string{
+			{"--entrypoint=/entrypoint.sh"},
+			{"--health-cmd", "test -f /tmp/ready || exit 1"},
+			{"docker.io/library/alpine:3.20", "sh", "-c", "echo one two; sleep inf"},
+		}},
+	}
+	for _, tt := range tests {
+		argv := execStartArgv(t, string(out), tt.service)
+		for _, want := range tt.want {
+			if !containsRun(argv, want) {
+				t.Errorf("%s: argv lacks %q\nargv: %q", tt.service, want, argv)
+			}
+		}
+	}
+}
+
+// execStartArgv finds a service's ExecStart= in dry-run output and decodes it
+// the way systemd does. Quadlet writes each word bare or wholly double-quoted
+// with C escapes, so words split on spaces and unquote with strconv. An
+// unescaped specifier or variable becomes a marker rather than a guess, so a
+// missing escape shows up as a mismatch.
+func execStartArgv(t *testing.T, dryrun, service string) []string {
+	t.Helper()
+	_, unit, found := strings.Cut(dryrun, "---"+service+".service---")
+	if !found {
+		t.Fatalf("no %s.service in the dry-run output:\n%s", service, dryrun)
+	}
+	_, line, found := strings.Cut(unit, "\nExecStart=")
+	if !found {
+		t.Fatalf("%s.service has no ExecStart=:\n%s", service, unit)
+	}
+	line, _, _ = strings.Cut(line, "\n")
+
+	var argv []string
+	for _, word := range strings.Fields(line) {
+		if strings.HasPrefix(word, `"`) {
+			unquoted, err := strconv.Unquote(word)
+			if err != nil {
+				t.Fatalf("cannot unquote %s: %v", word, err)
+			}
+			word = unquoted
+		}
+		argv = append(argv, expand(word))
+	}
+	return argv
+}
+
+// expand applies systemd's `%%` and `$$` escapes, marking anything a specifier
+// or variable would have replaced.
+func expand(word string) string {
+	var b strings.Builder
+	for i := 0; i < len(word); i++ {
+		c := word[i]
+		if c == '%' || c == '$' {
+			if i+1 < len(word) && word[i+1] == c {
+				b.WriteByte(c)
+				i++
+			} else {
+				b.WriteString("<expanded>")
+			}
+			continue
+		}
+		b.WriteByte(c)
+	}
+	return b.String()
+}
+
+// containsRun reports whether want appears in argv as consecutive elements.
+func containsRun(argv, want []string) bool {
+	for i := 0; i+len(want) <= len(argv); i++ {
+		match := true
+		for j := range want {
+			if argv[i+j] != want[j] {
+				match = false
+				break
+			}
+		}
+		if match {
+			return true
+		}
+	}
+	return false
 }
 
 func keys(m map[string]string) []string {

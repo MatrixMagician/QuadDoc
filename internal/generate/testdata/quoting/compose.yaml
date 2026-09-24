@@ -1,0 +1,28 @@
+# Values that only survive conversion if the generator quotes and escapes them.
+# Each one ran the wrong command or got the wrong environment before issue #19.
+services:
+  app:
+    image: docker.io/library/alpine:3.20
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["echo \"$$0\" \"$$1\"; sleep inf", "hello world", "&&"]
+    environment:
+      GREETING: "hello world"
+      QUOTED: 'say "hi"'
+      PCT: "100%"
+      DATE_FMT: "%Y-%m-%d"
+      HOMEISH: "50%h"
+      DOLLAR: "cost $$HOME"
+      PLAIN: "plain"
+    labels:
+      description: "a label with spaces"
+    sysctls:
+      net.ipv4.ping_group_range: "0 1000"
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/my file"]
+      interval: 30s
+  shell:
+    image: docker.io/library/alpine:3.20
+    entrypoint: /entrypoint.sh
+    command: sh -c "echo one two; sleep inf"
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/ready || exit 1"]
