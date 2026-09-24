@@ -277,6 +277,20 @@ func TestQD011(t *testing.T) {
 	}
 }
 
+func TestQD011CitesEachGroupAddLine(t *testing.T) {
+	u := unitFromText(t, "app.container",
+		"[Unit]\nAfter=db.service\n\n[Container]\nImage=app\nGroupAdd=render\nGroupAdd=video\n")
+	got := runRule(t, "QD011", rootlessHost, u)
+
+	var lines []int
+	for _, f := range got {
+		lines = append(lines, f.Line)
+	}
+	if len(lines) != 2 || lines[0] != 6 || lines[1] != 7 {
+		t.Errorf("QD011 lines = %v, want [6 7]", lines)
+	}
+}
+
 func TestQD011MentionsTheCrunRequirement(t *testing.T) {
 	// podman-run(1) is explicit that keep-groups is crun-only. Recommending it
 	// without saying so would send a runc user down a dead end.

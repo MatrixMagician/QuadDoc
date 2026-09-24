@@ -339,6 +339,19 @@ func TestQD021(t *testing.T) {
 	}
 }
 
+func TestQD020AndQD021CiteLinesOutsideTheContainerSection(t *testing.T) {
+	web := unitFromText(t, "web.container", "[Unit]\nAfter=db.service\n\n[Container]\n"+
+		"Image=nginx\nNetwork=app.network\n\n[Service]\nRestart=unless-stopped\n")
+	db := unitFromText(t, "db.container", "[Container]\nImage=postgres\nNetwork=app.network\n")
+
+	for rule, want := range map[string]int{"QD020": 2, "QD021": 9} {
+		got := runRule(t, rule, hostctx.Unknown{}, web, db)
+		if len(got) != 1 || got[0].Line != want {
+			t.Errorf("%s findings = %+v, want one on line %d", rule, got, want)
+		}
+	}
+}
+
 func TestQD021SaysItIsIgnoredNotRejected(t *testing.T) {
 	// Verified with systemd-analyze verify: systemd logs "Failed to parse
 	// Restart=unless-stopped, ignoring" and carries on with no policy, which

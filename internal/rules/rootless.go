@@ -153,7 +153,7 @@ func checkQD011(c *Context) []Finding {
 	var findings []Finding
 
 	for _, u := range c.Project.Units {
-		for i, group := range u.GroupAdd {
+		for _, group := range u.GroupAdd {
 			g := strings.TrimSpace(group)
 			if g == "" || g == "keep-groups" {
 				continue
@@ -168,7 +168,7 @@ func checkQD011(c *Context) []Finding {
 				Severity:   Error,
 				Confidence: Possible,
 				Unit:       u.Path,
-				Line:       u.KeyLine("GroupAdd") + i,
+				Line:       u.EntryLine("Container", "GroupAdd", group),
 				Message: fmt.Sprintf("GroupAdd=%s names a group that must exist inside the container, not on the host",
 					g),
 				Remediation: fmt.Sprintf("If you meant to pass through the host user's group access, which is "+
