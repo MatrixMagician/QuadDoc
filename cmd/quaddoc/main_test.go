@@ -59,9 +59,16 @@ func buildCLI(t *testing.T) string {
 // to its default did exactly that before this was added.
 func run(t *testing.T, bin string, args ...string) (string, string, int) {
 	t.Helper()
+	return runIn(t, t.TempDir(), bin, args...)
+}
+
+// runIn is run with a chosen working directory, for tests whose output must
+// show relative paths.
+func runIn(t *testing.T, dir, bin string, args ...string) (string, string, int) {
+	t.Helper()
 
 	cmd := exec.Command(bin, args...)
-	cmd.Dir = t.TempDir()
+	cmd.Dir = dir
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
