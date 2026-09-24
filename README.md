@@ -54,19 +54,21 @@ Convert it:
 
 ```console
 $ quaddoc convert compose.yaml --out units/
-Wrote 6 units to units/
+Wrote 4 units to units/
 warning: web.container: depends_on db used condition: service_healthy, which
          systemd ordering cannot express; see the comment in the generated unit
 note: web.container: compose used `restart: unless-stopped`, which systemd
-         cannot express exactly...
+         cannot express exactly. Restart=always is the closest: ...
+
+Run `quaddoc lint units/` to audit the result.
 ```
 
-Then audit it:
+Then audit it. Paths are shortened to `.../` here:
 
 ```console
 $ quaddoc lint units/
 units/db.container
-  warning:10 QD041 POSTGRES_PASSWORD= holds a literal credential in the unit file
+  warning:9 QD041 POSTGRES_PASSWORD= holds a literal credential in the unit file
     Move the value into a Podman secret and reference it:
 
         printf '%s' "$VALUE" | podman secret create postgres_password -
@@ -76,24 +78,41 @@ units/db.container
         Secret=postgres_password,type=env,target=POSTGRES_PASSWORD
 
     and remove the Environment= line.
-  error:21 QD001 bind mount .../certs has no SELinux relabelling option, so on an
-                 enforcing system the container would be denied access (possible; run
-                 with --host-context to confirm)
-    Add :z to the mount, mounted by 2 units, so a shared label is required;
-    a private :Z would let them overwrite each other's categories:
+  error:22 QD001 bind mount .../certs has no SELinux relabelling option, so on an
+                 enforcing system the container would be denied access (possible;
+                 run with --host-context to confirm)
+    Add :z to the mount, mounted by 2 units, so a shared label is required; a
+    private :Z would let them overwrite each other's categories:
 
         Volume=.../certs:/etc/postgresql/certs:ro,z
 
-  warning QD020 web is ordered after db, but systemd ordering waits for the
-                container to start, not to become ready
+    Run `quaddoc fix --rule QD001` to apply this.
 
-Found 3 errors, 4 warnings.
+units/web.container
+  warning:11 QD020 web is ordered after db, but systemd ordering waits for the
+                   container to start, not to become ready
+    On db, make the service report started only once the container is healthy:
+
+        Notify=healthy
+
+    This requires a healthcheck on that container. It already has one, so this
+    is a one-line change.
+  error:24 QD001 bind mount .../site has no SELinux relabelling option, ...
+    Add :Z to the mount, used only by this unit, so a private label is right:
+
+        Volume=.../site:/usr/share/nginx/html:ro,Z
+
+    Run `quaddoc fix --rule QD001` to apply this.
+  error:32 QD001 bind mount .../certs has no SELinux relabelling option, ...
+    Add :z to the mount, mounted by 2 units, ...
+
+Found 3 errors, 2 warnings.
 ```
 
-Note what the third finding did. `./certs` is mounted by **two** services, so it
-needs the shared label `:z`; `./site` is mounted by one, so it gets the private
-`:Z`. That distinction is invisible to a per-file linter, and getting it wrong
-gives you containers that work individually and fail together, in an order that
+Look at the three QD001 findings. `./certs` is mounted by **two** services, so
+it needs the shared label `:z`. `./site` is mounted by one, so it gets the
+private `:Z`. A per-file linter cannot see that difference. Get it wrong and
+each container works on its own but they fail together, in an order that
 depends on which one restarted last.
 
 Fix the mechanical ones:
@@ -103,9 +122,11 @@ $ quaddoc fix units/ --write
 updated units/db.container (QD001)
 updated units/web.container (QD001)
 
-4 finding(s) have no mechanical fix and need a decision from you:
-  QD020 Ordering does not wait for a dependency to become healthy (2)
-  QD041 Credential passed as an environment value in the unit file (2)
+2 finding(s) have no mechanical fix and need a decision from you:
+  QD020 Ordering does not wait for a dependency to become healthy (1)
+  QD041 Credential passed as an environment value in the unit file (1)
+
+Run `quaddoc lint` to see them in full.
 ```
 
 The rest are left alone deliberately. Moving a password into a secret and
@@ -148,13 +169,17 @@ detected about your system and how many rules it is carrying.
 ## Usage
 
 ```
-quaddoc convert <compose.yaml> [--out units/] [--pod]
+quaddoc convert <compose.yaml> [--out units/] [--pod] [--dry-run] [--no-annotate]
 quaddoc lint <path...> [--host-context[=dir]] [--json|--sarif] [--explain] [--disable QD001,...]
-quaddoc fix <path...> [--rule QD001,...] [--write]
+quaddoc fix <path...> [--rule QD001,...] [--host-context[=dir]] [--write]
 quaddoc capture-context [--out ctx/]
-quaddoc doctor
+quaddoc doctor [--host-context=dir]
 quaddoc rules [QD###] [--markdown]
+quaddoc version
 ```
+
+Run `quaddoc <command> -h` for what each flag does. `fix` previews a diff
+unless you pass `--write`.
 
 Exit codes are CI-friendly: `0` clean, `1` warnings only, `2` any error.
 
@@ -219,7 +244,8 @@ up on.
 
 ## Rules
 
-20 rules across five families. See the [full reference](docs/rules.md), or
+20 rules across five families, plus QD000, which reports a suppression that
+gives no reason. See the [full reference](docs/rules.md), or
 `quaddoc rules QD001` for one.
 
 | Family | Rules |
