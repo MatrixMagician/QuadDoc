@@ -175,9 +175,8 @@ func ParseMount(value string, line int) Mount {
 	case strings.HasSuffix(m.Source, ".volume"):
 		m.Type = MountNamed
 		m.UnitRef = strings.TrimSuffix(m.Source, ".volume")
-	case strings.HasPrefix(m.Source, "/"), strings.HasPrefix(m.Source, "./"),
-		strings.HasPrefix(m.Source, "../"), strings.HasPrefix(m.Source, "~"),
-		strings.HasPrefix(m.Source, "%"):
+	case strings.HasPrefix(m.Source, "/"), strings.HasPrefix(m.Source, "."),
+		strings.HasPrefix(m.Source, "~"), strings.HasPrefix(m.Source, "%"):
 		// Absolute, relative, home-anchored, and systemd-specifier paths are
 		// all bind mounts. Quadlet resolves a leading `.` relative to the
 		// unit file's own location.

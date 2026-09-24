@@ -60,6 +60,21 @@ func TestParseMount(t *testing.T) {
 			},
 		},
 		{
+			// Verified against Podman 5.8.4: `Volume=.:/app` generates
+			// `-v <unit dir>:/app`, not a volume named `.`.
+			name:  "bare dot source is a bind to the unit's directory",
+			value: ".:/app",
+			want:  Mount{Source: ".", Destination: "/app", Type: MountBind},
+		},
+		{
+			name:  "bare dot-dot source is a bind to the parent directory",
+			value: "..:/parent:Z",
+			want: Mount{
+				Source: "..", Destination: "/parent",
+				Options: []string{"Z"}, Type: MountBind,
+			},
+		},
+		{
 			name:  "systemd specifier source is a bind",
 			value: "%h/data:/data",
 			want:  Mount{Source: "%h/data", Destination: "/data", Type: MountBind},
