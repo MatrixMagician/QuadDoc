@@ -178,6 +178,38 @@ Alias=web.service
 	}
 }
 
+func TestEmptyAssignmentResetsListKeys(t *testing.T) {
+	// systemd.syntax(7): an empty assignment resets a list. Verified against
+	// Podman 5.8.4: this unit generates `-v /b:/b` and no --network,
+	// --publish, --env or --group-add.
+	f, err := quadlet.Parse("web.container", strings.NewReader(`[Container]
+Image=nginx
+Volume=/a:/a
+Volume=
+Volume=/b:/b
+Network=app.network
+Network=
+PublishPort=80:80
+PublishPort=
+Environment=A=1
+Environment=
+GroupAdd=video
+GroupAdd=
+`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	u := FromParsed(f)
+
+	if len(u.Mounts) != 1 || u.Mounts[0].Source != "/b" {
+		t.Errorf("mounts = %+v, want only /b", u.Mounts)
+	}
+	if len(u.Networks) != 0 || len(u.Ports) != 0 || len(u.Environment) != 0 || len(u.GroupAdd) != 0 {
+		t.Errorf("networks/ports/environment/groupAdd = %v/%v/%v/%v, want all empty",
+			u.Networks, u.Ports, u.Environment, u.GroupAdd)
+	}
+}
+
 func TestHealthCmdNoneMeansNoHealthcheck(t *testing.T) {
 	// podman-systemd.unit(5): "A value of none disables existing healthchecks."
 	f, err := quadlet.Parse("web.container",

@@ -94,6 +94,27 @@ func FromParsed(f *quadlet.File) *Unit {
 
 	for _, e := range f.Section(section) {
 		u.SetKeyLine(e.Key, e.Line)
+		// An empty assignment resets a list-valued key (systemd.syntax(7));
+		// the generator honours this for every list modelled here.
+		if e.Value == "" {
+			switch strings.ToLower(e.Key) {
+			case "volume":
+				u.Mounts = nil
+				continue
+			case "publishport":
+				u.Ports = nil
+				continue
+			case "network":
+				u.Networks = nil
+				continue
+			case "environment":
+				u.Environment = nil
+				continue
+			case "groupadd":
+				u.GroupAdd = nil
+				continue
+			}
+		}
 		switch strings.ToLower(e.Key) {
 		case "image":
 			u.Image = e.Value
