@@ -87,9 +87,11 @@ type Context interface {
 	// lower it to 80.
 	UnprivilegedPortStart() (int, bool)
 
-	// ExistingUnitNames returns the names of units already installed in the
-	// Quadlet search path, for collision detection.
-	ExistingUnitNames() ([]string, bool)
+	// ExistingUnitPaths returns the host paths of units already installed in
+	// the Quadlet search path, for collision detection. A collision is on the
+	// file name; the full path is what tells a colliding unit from the unit
+	// being linted.
+	ExistingUnitPaths() ([]string, bool)
 
 	// Rootless reports whether Podman is running rootless.
 	Rootless() (bool, bool)
@@ -104,7 +106,7 @@ func (Unknown) MountFor(string) (Mount, bool)       { return Mount{}, false }
 func (Unknown) SubUIDRanges() ([]IDRange, bool)     { return nil, false }
 func (Unknown) SubGIDRanges() ([]IDRange, bool)     { return nil, false }
 func (Unknown) UnprivilegedPortStart() (int, bool)  { return 0, false }
-func (Unknown) ExistingUnitNames() ([]string, bool) { return nil, false }
+func (Unknown) ExistingUnitPaths() ([]string, bool) { return nil, false }
 func (Unknown) Rootless() (bool, bool)              { return false, false }
 
 // Static is a Context with fixed answers, for tests and for replaying a
@@ -116,8 +118,8 @@ type Static struct {
 	SubGID         []IDRange
 	PortStart      int
 	PortStartKnown bool
-	UnitNames      []string
-	UnitNamesKnown bool
+	UnitPaths      []string
+	UnitPathsKnown bool
 	IsRootless     bool
 	RootlessKnown  bool
 }
@@ -126,7 +128,9 @@ func (s Static) SELinux() SELinuxMode { return s.SELinuxMode }
 
 // MountFor returns the longest mount point that prefixes path, which is the
 // filesystem the path is actually on. A shorter match like `/` would otherwise
-// shadow the specific mount the caller cares about.
+// shadow the specific mount the caller cares about. Of two mounts on the same
+// point, the later wins: mounts are listed in mount order (proc(5)), and the
+// later one hides the earlier.
 func (s Static) MountFor(path string) (Mount, bool) {
 	var best Mount
 	var found bool
@@ -134,7 +138,7 @@ func (s Static) MountFor(path string) (Mount, bool) {
 		if !pathHasPrefix(path, m.MountPoint) {
 			continue
 		}
-		if !found || len(m.MountPoint) > len(best.MountPoint) {
+		if !found || len(m.MountPoint) >= len(best.MountPoint) {
 			best, found = m, true
 		}
 	}
@@ -153,8 +157,8 @@ func (s Static) UnprivilegedPortStart() (int, bool) {
 	return s.PortStart, s.PortStartKnown
 }
 
-func (s Static) ExistingUnitNames() ([]string, bool) {
-	return s.UnitNames, s.UnitNamesKnown
+func (s Static) ExistingUnitPaths() ([]string, bool) {
+	return s.UnitPaths, s.UnitPathsKnown
 }
 
 func (s Static) Rootless() (bool, bool) {

@@ -3,6 +3,9 @@ package hostctx
 import (
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -57,6 +60,32 @@ func TestMountForPicksTheLongestPrefix(t *testing.T) {
 				t.Errorf("MountFor(%s) = %s, want %s", path, m.FSType, want)
 			}
 		})
+	}
+}
+
+func TestMountForPicksTheLaterOfTwoMountsOnOnePoint(t *testing.T) {
+	// The kernel lists mounts in mount order, and a later mount on the same
+	// point hides the earlier one. Picking the first would put this path on
+	// ext4 when it is really on NFS, and QD003 would stay silent.
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "proc/self/mountinfo"),
+		"22 1 0:20 / / rw,relatime shared:1 - ext4 /dev/sda1 rw\n"+
+			"40 22 8:2 / /mnt/data rw,relatime shared:5 - ext4 /dev/sdb1 rw\n"+
+			"41 22 0:45 / /mnt/data rw,relatime shared:9 - nfs4 nas:/export/data rw,vers=4.2\n")
+
+	m, ok := NewReplay(dir).MountFor("/mnt/data/app")
+	if !ok || m.FSType != "nfs4" {
+		t.Errorf("MountFor(/mnt/data/app) = %q/%v, want nfs4/true", m.FSType, ok)
+	}
+}
+
+func writeFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -128,13 +157,36 @@ func TestCaptureThenReplayMatchesLive(t *testing.T) {
 		}
 	}
 
-	liveNames, liveNamesKnown := live.ExistingUnitNames()
-	replayNames, replayNamesKnown := replay.ExistingUnitNames()
-	if liveNamesKnown != replayNamesKnown {
-		t.Errorf("unit names known: live = %v, replay = %v", liveNamesKnown, replayNamesKnown)
+	livePaths, livePathsKnown := live.ExistingUnitPaths()
+	replayPaths, replayPathsKnown := replay.ExistingUnitPaths()
+	if livePathsKnown != replayPathsKnown || !slices.Equal(livePaths, replayPaths) {
+		t.Errorf("unit paths: live = %v/%v, replay = %v/%v",
+			livePaths, livePathsKnown, replayPaths, replayPathsKnown)
 	}
-	if len(liveNames) != len(replayNames) {
-		t.Errorf("unit names: live has %d, replay has %d", len(liveNames), len(replayNames))
+}
+
+func TestReplayDoesNotDependOnTheReplayingHome(t *testing.T) {
+	// Capture as one user, replay as another. The rootless search path embeds
+	// $HOME, so replay must read where the units were rather than re-derive
+	// the search path from its own environment.
+	if os.Geteuid() == 0 {
+		t.Skip("the rootful search path does not involve $HOME")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	installed := filepath.Join(home, ".config/containers/systemd/web.container")
+	writeFile(t, installed, "[Container]\nImage=nginx\n")
+
+	dir := t.TempDir()
+	if err := Capture(dir); err != nil {
+		t.Fatalf("capturing: %v", err)
+	}
+
+	t.Setenv("HOME", t.TempDir())
+	paths, known := NewReplay(dir).ExistingUnitPaths()
+	if !known || !slices.Contains(paths, installed) {
+		t.Errorf("replayed unit paths = %v/%v, want %s among them", paths, known, installed)
 	}
 }
 
@@ -142,30 +194,36 @@ func TestCaptureDoesNotCopyUnitContents(t *testing.T) {
 	// A captured context is meant to be sent to someone else. Unit files hold
 	// environment variables and secret references, so only their names are
 	// recorded.
+	if os.Geteuid() == 0 {
+		t.Skip("the unit is planted under $HOME, which only the rootless search path reads")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	writeFile(t, filepath.Join(home, ".config/containers/systemd/web.container"),
+		"[Container]\nEnvironment=SECRET=hunter2\n")
+
 	dir := t.TempDir()
 	if err := Capture(dir); err != nil {
 		t.Fatalf("capturing: %v", err)
 	}
 
-	var checked int
 	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
 			return err
 		}
-		switch filepath.Ext(path) {
-		case ".container", ".volume", ".network", ".pod":
-			checked++
-			if info.Size() != 0 {
-				t.Errorf("%s was captured with %d bytes of content; only names should be recorded",
-					path, info.Size())
-			}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if strings.Contains(string(data), "hunter2") {
+			t.Errorf("%s carries the unit's contents; only its path should be recorded", path)
 		}
 		return nil
 	})
 	if err != nil {
 		t.Fatalf("walking the capture: %v", err)
 	}
-	t.Logf("checked %d recorded unit names", checked)
 }
 
 func TestReplayOfAnEmptyDirectoryKnowsNothing(t *testing.T) {
@@ -181,6 +239,70 @@ func TestReplayOfAnEmptyDirectoryKnowsNothing(t *testing.T) {
 	}
 	if ranges, known := replay.SubUIDRanges(); known {
 		t.Errorf("an empty directory should not report subordinate ranges, got %+v", ranges)
+	}
+}
+
+func TestNoSubIDEntryIsKnownToBeNone(t *testing.T) {
+	// A readable /etc/subuid with no line for this user is the host saying
+	// "none", which is exactly when QD013 must speak. Reporting it as unknown
+	// silences the rule on the one host where it matters.
+	got := parseSubIDs(strings.NewReader("# comment\nbob:100000:65536\n"), []string{"alice", "1000"})
+	if got == nil || len(got) != 0 {
+		t.Errorf("parseSubIDs with no matching line = %#v, want a known, empty []IDRange{}", got)
+	}
+
+	// Capture must carry "known, none" across, rather than dropping the file
+	// and turning it back into "unknown".
+	src := t.TempDir()
+	writeFile(t, filepath.Join(src, "etc/subuid"), "# no ranges\n")
+	dst := t.TempDir()
+	if err := captureSubIDs(dst, "/etc/subuid", NewReplay(src)); err != nil {
+		t.Fatal(err)
+	}
+	ranges, known := NewReplay(dst).SubUIDRanges()
+	if !known || len(ranges) != 0 {
+		t.Errorf("replayed SubUIDRanges = %v/%v, want none/true", ranges, known)
+	}
+}
+
+func TestSearchPathFollowsRootlessness(t *testing.T) {
+	// podman-systemd.unit(5) gives rootless and rootful Podman separate unit
+	// search paths. Mixing them reports collisions with units the other mode
+	// never loads, and misses the per-UID and runtime directories.
+	uid := strconv.Itoa(os.Getuid())
+	t.Setenv("HOME", "/home/tester")
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("XDG_RUNTIME_DIR", "/run/user/"+uid)
+
+	rootful := []string{
+		"/run/containers/systemd/a.container",
+		"/etc/containers/systemd/b.container",
+		"/usr/share/containers/systemd/c.container",
+	}
+	rootless := []string{
+		"/run/user/" + uid + "/containers/systemd/d.container",
+		"/home/tester/.config/containers/systemd/e.container",
+		"/etc/containers/systemd/users/" + uid + "/f.container",
+		"/etc/containers/systemd/users/g.container",
+	}
+
+	// This is the layout of a capture from before quaddoc-units, which replay
+	// still reads by scanning the search path under the capture root.
+	dir := t.TempDir()
+	for _, p := range append(append(slices.Clone(rootful), rootless...),
+		"/home/tester/.local/share/containers/systemd/neither.container") {
+		writeFile(t, filepath.Join(dir, p), "")
+	}
+
+	tests := map[string][]string{"true": rootless, "false": rootful}
+	for mode, want := range tests {
+		t.Run("rootless="+mode, func(t *testing.T) {
+			writeFile(t, filepath.Join(dir, "quaddoc-rootless"), mode+"\n")
+			got, _ := NewReplay(dir).ExistingUnitPaths()
+			if !slices.Equal(got, want) {
+				t.Errorf("units found = %v, want %v", got, want)
+			}
+		})
 	}
 }
 
@@ -201,7 +323,7 @@ func TestUnknownKnowsNothing(t *testing.T) {
 	if _, ok := c.UnprivilegedPortStart(); ok {
 		t.Error("Unknown should know no port threshold")
 	}
-	if _, ok := c.ExistingUnitNames(); ok {
+	if _, ok := c.ExistingUnitPaths(); ok {
 		t.Error("Unknown should know no unit names")
 	}
 	if _, ok := c.Rootless(); ok {
@@ -233,8 +355,8 @@ func TestDescribeCoversEveryFact(t *testing.T) {
 		SubUID:         []IDRange{{Start: 100000, Count: 65536}},
 		PortStart:      1024,
 		PortStartKnown: true,
-		UnitNames:      []string{"a.container"},
-		UnitNamesKnown: true,
+		UnitPaths:      []string{"a.container"},
+		UnitPathsKnown: true,
 		IsRootless:     true,
 		RootlessKnown:  true,
 	})

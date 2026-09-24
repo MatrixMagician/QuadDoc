@@ -87,6 +87,11 @@ s=s.replace('would create \`systemd-%s\`, so a rename changes the object name to
 s=s.replace('\t\t\t\tfileName, u.Name),','\t\t\t\tfileName),')
 open(p,'w').write(s)"
 
+run_mutation "QD032 reports a unit colliding with itself" "$P/network.go" ./$P "
+p='$P/network.go'; s=open(p).read()
+s=s.replace('os.SameFile(self, other) {','os.SameFile(self, other) && false {')
+open(p,'w').write(s)"
+
 run_mutation "QD041 reports \${VAR} references as leaks" "$P/hygiene.go" ./$P "
 p='$P/hygiene.go'; s=open(p).read()
 s=s.replace('\tif strings.HasPrefix(v, \"\$\") || strings.HasPrefix(v, \"%\") {\n\t\treturn false\n\t}','')
@@ -134,12 +139,32 @@ open(p,'w').write(s)"
 
 run_mutation "hostctx picks the shortest mount prefix" "internal/hostctx/hostctx.go" ./internal/hostctx "
 p='internal/hostctx/hostctx.go'; s=open(p).read()
-s=s.replace('if !found || len(m.MountPoint) > len(best.MountPoint) {','if !found || len(m.MountPoint) < len(best.MountPoint) {')
+s=s.replace('if !found || len(m.MountPoint) >= len(best.MountPoint) {','if !found || len(m.MountPoint) < len(best.MountPoint) {')
+open(p,'w').write(s)"
+
+run_mutation "hostctx keeps the shadowed mount" "internal/hostctx/hostctx.go" ./internal/hostctx "
+p='internal/hostctx/hostctx.go'; s=open(p).read()
+s=s.replace('if !found || len(m.MountPoint) >= len(best.MountPoint) {','if !found || len(m.MountPoint) > len(best.MountPoint) {')
+open(p,'w').write(s)"
+
+run_mutation "no subuid entry reads as unknown" "internal/hostctx/live.go" ./internal/hostctx "
+p='internal/hostctx/live.go'; s=open(p).read()
+s=s.replace('\tranges := []IDRange{}\n','\tvar ranges []IDRange\n')
+open(p,'w').write(s)"
+
+run_mutation "rootful reads the rootless search path" "internal/hostctx/live.go" ./internal/hostctx "
+p='internal/hostctx/live.go'; s=open(p).read()
+s=s.replace('\tif rootless, _ := l.Rootless(); !rootless {','\tif false {')
 open(p,'w').write(s)"
 
 run_mutation "capture copies unit file contents" "internal/hostctx/live.go" ./internal/hostctx "
 p='internal/hostctx/live.go'; s=open(p).read()
-s=s.replace('os.WriteFile(filepath.Join(unitDir, name), nil, 0o644)','os.WriteFile(filepath.Join(unitDir, name), []byte(\"[Container]\\nEnvironment=SECRET=hunter2\\n\"), 0o644)')
+s=s.replace('\t\t\tb.WriteString(p + \"\\\\n\")','\t\t\tdata, _ := os.ReadFile(p)\n\t\t\tb.WriteString(p + \"\\\\n\" + string(data))')
+open(p,'w').write(s)"
+
+run_mutation "replay ignores the recorded unit paths" "internal/hostctx/live.go" ./internal/hostctx "
+p='internal/hostctx/live.go'; s=open(p).read()
+s=s.replace('if data, err := os.ReadFile(filepath.Join(l.Root, unitsFile)); err == nil {','if data, err := os.ReadFile(filepath.Join(l.Root, unitsFile)); err == nil && l.Root == \"\" {')
 open(p,'w').write(s)"
 
 run_mutation "suppressions no longer require a reason" "internal/config/config.go" ./internal/config "

@@ -3,9 +3,11 @@ package hostctx
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"os/user"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -33,7 +35,7 @@ type Live struct {
 		portStart   int
 		portKnown   bool
 		portRead    bool
-		unitNames   []string
+		unitPaths   []string
 		unitsKnown  bool
 		unitsRead   bool
 		rootless    bool
@@ -185,8 +187,9 @@ func (l *Live) SubGIDRanges() ([]IDRange, bool) {
 	return l.cache.subGID, l.cache.subGID != nil
 }
 
-// readSubIDs parses subuid(5) format: `name:start:count`, one per line, where
-// the name may be a user name or a UID.
+// readSubIDs reads the calling user's lines from a subuid(5) file. A file that
+// opens but has no line for the user yields an empty, non-nil slice: the host
+// has answered "none", which is not the same as not knowing.
 func (l *Live) readSubIDs(file string) []IDRange {
 	f, err := os.Open(l.path(file))
 	if err != nil {
@@ -194,17 +197,27 @@ func (l *Live) readSubIDs(file string) []IDRange {
 	}
 	defer f.Close()
 
-	// Match on both the name and the numeric UID, since either may appear.
-	var names []string
-	if u, err := user.Current(); err == nil {
-		names = append(names, u.Username, u.Uid)
-	}
 	// When replaying a captured context the current user is not the captured
 	// one, so a capture records only the relevant lines and we take them all.
-	takeAll := l.Root != ""
+	if l.Root != "" {
+		return parseSubIDs(f, nil)
+	}
 
-	var ranges []IDRange
-	sc := bufio.NewScanner(f)
+	// Match on both the name and the numeric UID, since either may appear.
+	// Without a user there is no telling which lines are ours.
+	u, err := user.Current()
+	if err != nil {
+		return nil
+	}
+	return parseSubIDs(f, []string{u.Username, u.Uid})
+}
+
+// parseSubIDs parses subuid(5) format, `name:start:count` one per line, where
+// the name may be a user name or a UID. It keeps the lines whose name is in
+// names, or every line when names is nil.
+func parseSubIDs(r io.Reader, names []string) []IDRange {
+	ranges := []IDRange{}
+	sc := bufio.NewScanner(r)
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
@@ -215,7 +228,7 @@ func (l *Live) readSubIDs(file string) []IDRange {
 		if len(parts) != 3 {
 			continue
 		}
-		if !takeAll && !contains(names, parts[0]) {
+		if names != nil && !slices.Contains(names, parts[0]) {
 			continue
 		}
 
@@ -227,15 +240,6 @@ func (l *Live) readSubIDs(file string) []IDRange {
 		ranges = append(ranges, IDRange{Start: start, Count: count})
 	}
 	return ranges
-}
-
-func contains(haystack []string, needle string) bool {
-	for _, s := range haystack {
-		if s == needle {
-			return true
-		}
-	}
-	return false
 }
 
 // UnprivilegedPortStart reads net.ipv4.ip_unprivileged_port_start from procfs
@@ -261,35 +265,58 @@ func (l *Live) UnprivilegedPortStart() (int, bool) {
 }
 
 // quadletSearchPath returns the directories Quadlet reads units from, in
-// precedence order, as documented in podman-systemd.unit(5).
+// precedence order. Rootful and rootless Podman have separate lists, per
+// podman-systemd.unit(5) (checked against Podman 5.8), sections "Podman
+// rootful unit search path" and "Podman rootless unit search path".
 func (l *Live) quadletSearchPath() []string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		home = os.Getenv("HOME")
+	if rootless, _ := l.Rootless(); !rootless {
+		return []string{
+			"/run/containers/systemd",
+			"/etc/containers/systemd",
+			"/usr/share/containers/systemd",
+		}
 	}
 
-	paths := []string{
-		filepath.Join(home, ".config/containers/systemd"),
-		filepath.Join(home, ".local/share/containers/systemd"),
-		"/etc/containers/systemd/users",
-		"/run/containers/systemd",
-		"/etc/containers/systemd",
-		"/usr/share/containers/systemd",
+	var paths []string
+	if runtime := os.Getenv("XDG_RUNTIME_DIR"); runtime != "" {
+		paths = append(paths, filepath.Join(runtime, "containers/systemd"))
 	}
-	if config := os.Getenv("XDG_CONFIG_HOME"); config != "" {
-		paths = append([]string{filepath.Join(config, "containers/systemd")}, paths...)
+	// $XDG_CONFIG_HOME, or ~/.config when it is unset.
+	if config, err := os.UserConfigDir(); err == nil {
+		paths = append(paths, filepath.Join(config, "containers/systemd"))
 	}
-	return paths
+	return append(paths,
+		filepath.Join("/etc/containers/systemd/users", strconv.Itoa(os.Getuid())),
+		"/etc/containers/systemd/users")
 }
 
-// ExistingUnitNames lists units already installed in the Quadlet search path.
-func (l *Live) ExistingUnitNames() ([]string, bool) {
+// unitsFile is where a capture records the installed units' paths.
+const unitsFile = "quaddoc-units"
+
+// ExistingUnitPaths lists units already installed in the Quadlet search path,
+// as paths on the host. A name installed in two directories appears twice,
+// since either copy collides with a new unit of that name.
+func (l *Live) ExistingUnitPaths() ([]string, bool) {
 	if l.cache.unitsRead {
-		return l.cache.unitNames, l.cache.unitsKnown
+		return l.cache.unitPaths, l.cache.unitsKnown
 	}
 	l.cache.unitsRead = true
 
-	seen := map[string]bool{}
+	if l.Root != "" {
+		if data, err := os.ReadFile(filepath.Join(l.Root, unitsFile)); err == nil {
+			for line := range strings.Lines(string(data)) {
+				if p := strings.TrimSuffix(line, "\n"); p != "" {
+					l.cache.unitPaths = append(l.cache.unitPaths, p)
+				}
+			}
+			l.cache.unitsKnown = true
+			return l.cache.unitPaths, true
+		}
+		// Captures made before quaddoc-units recorded empty files under
+		// the search path instead, which the scan below still finds as long
+		// as the replaying $HOME and UID match the capturing ones.
+	}
+
 	for _, dir := range l.quadletSearchPath() {
 		entries, err := os.ReadDir(l.path(dir))
 		if err != nil {
@@ -297,17 +324,16 @@ func (l *Live) ExistingUnitNames() ([]string, bool) {
 		}
 		l.cache.unitsKnown = true
 		for _, e := range entries {
-			if e.IsDir() || seen[e.Name()] {
+			if e.IsDir() {
 				continue
 			}
 			switch filepath.Ext(e.Name()) {
 			case ".container", ".volume", ".network", ".pod", ".kube", ".build", ".image":
-				seen[e.Name()] = true
-				l.cache.unitNames = append(l.cache.unitNames, e.Name())
+				l.cache.unitPaths = append(l.cache.unitPaths, filepath.Join(dir, e.Name()))
 			}
 		}
 	}
-	return l.cache.unitNames, l.cache.unitsKnown
+	return l.cache.unitPaths, l.cache.unitsKnown
 }
 
 // Rootless reports whether Podman would run rootless, which is simply whether
@@ -338,7 +364,8 @@ func (l *Live) Rootless() (bool, bool) {
 //
 // The files keep their original paths under the directory, so replay is the
 // same code reading the same layout, which is what keeps live and replay from
-// diverging.
+// diverging. The two facts that depend on who is asking, the rootless status
+// and the installed units, go in quaddoc-* files at the top instead.
 func Capture(dir string) error {
 	live := NewLive()
 
@@ -366,23 +393,18 @@ func Capture(dir string) error {
 		return err
 	}
 
-	// Unit names, recorded as empty files so replay's directory listing works
-	// unchanged. The contents are not read, and copying them would leak
-	// whatever secrets the units contain.
-	//
-	// They go under the first search-path directory, resolved the same way
-	// the live reader resolves it, so that replay finds them without any
-	// special case.
-	names, known := live.ExistingUnitNames()
-	if known {
-		unitDir := filepath.Join(dir, live.quadletSearchPath()[0])
-		if err := os.MkdirAll(unitDir, 0o755); err != nil {
-			return fmt.Errorf("creating %s: %w", unitDir, err)
+	// Unit paths, one per line in a file of their own. The contents are not
+	// read, and copying them would leak whatever secrets the units contain.
+	// The search path embeds $HOME and the UID, so the paths are recorded as
+	// found rather than laid out for replay to re-derive in its own
+	// environment.
+	if paths, known := live.ExistingUnitPaths(); known {
+		var b strings.Builder
+		for _, p := range paths {
+			b.WriteString(p + "\n")
 		}
-		for _, name := range names {
-			if err := os.WriteFile(filepath.Join(unitDir, name), nil, 0o644); err != nil {
-				return fmt.Errorf("recording unit name %s: %w", name, err)
-			}
+		if err := os.WriteFile(filepath.Join(dir, unitsFile), []byte(b.String()), 0o644); err != nil {
+			return fmt.Errorf("recording installed units: %w", err)
 		}
 	}
 
@@ -417,13 +439,14 @@ func copyInto(dir, file string) error {
 // captureSubIDs records only the calling user's subordinate ranges.
 func captureSubIDs(dir, file string, live *Live) error {
 	var ranges []IDRange
+	var known bool
 	switch file {
 	case "/etc/subuid":
-		ranges, _ = live.SubUIDRanges()
+		ranges, known = live.SubUIDRanges()
 	case "/etc/subgid":
-		ranges, _ = live.SubGIDRanges()
+		ranges, known = live.SubGIDRanges()
 	}
-	if ranges == nil {
+	if !known {
 		return nil
 	}
 
@@ -473,7 +496,7 @@ func Describe(c Context) []string {
 		lines = append(lines, "Unprivileged ports: unknown")
 	}
 
-	if names, known := c.ExistingUnitNames(); known {
+	if names, known := c.ExistingUnitPaths(); known {
 		lines = append(lines, fmt.Sprintf("Installed Quadlet units: %d", len(names)))
 	} else {
 		lines = append(lines, "Installed Quadlet units: unknown")

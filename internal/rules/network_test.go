@@ -1,6 +1,8 @@
 package rules
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -178,8 +180,8 @@ func TestQD031SilentWhenRootful(t *testing.T) {
 
 func TestQD032(t *testing.T) {
 	host := hostctx.Static{
-		UnitNames:      []string{"web.container", "shared.network"},
-		UnitNamesKnown: true,
+		UnitPaths:      []string{"/etc/containers/systemd/users/web.container", "/etc/containers/systemd/users/shared.network"},
+		UnitPathsKnown: true,
 	}
 
 	tests := []struct {
@@ -209,7 +211,7 @@ func TestQD032MentionsTheSystemdPrefix(t *testing.T) {
 	// Quadlet names the objects it creates `systemd-<name>`, so a rename
 	// changes the object name too. A user who does not know that will be
 	// surprised twice.
-	host := hostctx.Static{UnitNames: []string{"web.container"}, UnitNamesKnown: true}
+	host := hostctx.Static{UnitPaths: []string{"/etc/containers/systemd/users/web.container"}, UnitPathsKnown: true}
 	u := unitFromText(t, "web.container", "[Container]\nImage=nginx\n")
 
 	got := runRule(t, "QD032", host, u)
@@ -218,6 +220,38 @@ func TestQD032MentionsTheSystemdPrefix(t *testing.T) {
 	}
 	if !strings.Contains(got[0].Remediation, "systemd-web") {
 		t.Errorf("remediation does not mention the systemd- prefix:\n%s", got[0].Remediation)
+	}
+}
+
+func TestQD032IgnoresTheInstalledUnitItself(t *testing.T) {
+	// `quaddoc lint --host-context ~/.config/containers/systemd` lints the
+	// installed units in place, and a unit does not collide with itself.
+	// Quadlet supports a symlink as the base of a search path
+	// (podman-systemd.unit(5)), so the installed path is reached through one
+	// here and only the file's identity can say it is the same unit.
+	real := t.TempDir()
+	text := "[Container]\nImage=nginx\n"
+	if err := os.WriteFile(filepath.Join(real, "web.container"), []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "systemd")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+
+	host := hostctx.Static{
+		UnitPaths:      []string{filepath.Join(link, "web.container"), "/etc/containers/systemd/users/api.container"},
+		UnitPathsKnown: true,
+	}
+	self := unitFromText(t, filepath.Join(real, "web.container"), text)
+	other := unitFromText(t, "project/api.container", "[Container]\nImage=api\n")
+
+	got := runRule(t, "QD032", host, self, other)
+	if len(got) != 1 || got[0].Unit != "project/api.container" {
+		t.Fatalf("findings = %+v, want one, on project/api.container", got)
+	}
+	if want := "installed at /etc/containers/systemd/users/api.container"; !strings.Contains(got[0].Message, want) {
+		t.Errorf("message does not say where the colliding unit is (%q):\n%s", want, got[0].Message)
 	}
 }
 
