@@ -55,10 +55,10 @@ Convert it:
 ```console
 $ quaddoc convert compose.yaml --out units/
 Wrote 6 units to units/
-warning: depends_on db used condition: service_healthy, which systemd ordering
-         cannot express; see the comment in the generated unit
-note:    compose used `restart: unless-stopped`, which systemd cannot express
-         exactly...
+warning: web.container: depends_on db used condition: service_healthy, which
+         systemd ordering cannot express; see the comment in the generated unit
+note: web.container: compose used `restart: unless-stopped`, which systemd
+         cannot express exactly...
 ```
 
 Then audit it:
@@ -75,8 +75,10 @@ units/db.container
 
         Secret=postgres_password,type=env,target=POSTGRES_PASSWORD
 
-  error:23 QD001 bind mount .../certs has no SELinux relabelling option, so on an
-                 enforcing system the container would be denied access
+    and remove the Environment= line.
+  error:21 QD001 bind mount .../certs has no SELinux relabelling option, so on an
+                 enforcing system the container would be denied access (possible; run
+                 with --host-context to confirm)
     Add :z to the mount, mounted by 2 units, so a shared label is required;
     a private :Z would let them overwrite each other's categories:
 
