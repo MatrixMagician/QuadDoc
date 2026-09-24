@@ -212,7 +212,8 @@ func normalise(cfg *types.Project, name, workingDir string) *Project {
 	// so the loader files it under DisabledServices. Converting it silently
 	// would be wrong, but so would ignoring it: the user would get a unit
 	// directory quietly missing a service. Report it and move on.
-	for _, svc := range cfg.DisabledServices {
+	for _, svcName := range sortedKeys(cfg.DisabledServices) {
+		svc := cfg.DisabledServices[svcName]
 		p.Unsupported = append(p.Unsupported, unsupportedFor(svc)...)
 		p.Unsupported = append(p.Unsupported, Unsupported{
 			Service: svc.Name,
@@ -224,7 +225,8 @@ func normalise(cfg *types.Project, name, workingDir string) *Project {
 		})
 	}
 
-	for _, svc := range cfg.Services {
+	for _, svcName := range sortedKeys(cfg.Services) {
+		svc := cfg.Services[svcName]
 		s := Service{
 			Name:       svc.Name,
 			Image:      svc.Image,
@@ -362,7 +364,6 @@ func normalise(cfg *types.Project, name, workingDir string) *Project {
 		p.Networks = append(p.Networks, network)
 	}
 
-	sort.Slice(p.Services, func(i, j int) bool { return p.Services[i].Name < p.Services[j].Name })
 	return p
 }
 
