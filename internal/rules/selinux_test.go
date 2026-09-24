@@ -291,6 +291,48 @@ func TestQD003UsesTheLongestMatchingMount(t *testing.T) {
 	}
 }
 
+func TestQD003SuppressedWithoutSELinux(t *testing.T) {
+	// checkQD003 must consult selinuxFinding like QD001/QD002 do: relabelling
+	// advice is meaningless on a kernel without SELinux, and ADR-0004 says
+	// such rules are suppressed entirely, not merely downgraded. Issue #16.
+	host := hostctx.Static{
+		SELinuxMode: hostctx.SELinuxDisabled,
+		Mounts: []hostctx.Mount{
+			{MountPoint: "/", FSType: "ext4"},
+			{MountPoint: "/mnt/nfs", FSType: "nfs4"},
+		},
+	}
+	u := unitFromText(t, "web.container",
+		"[Container]\nImage=nginx\nVolume=/mnt/nfs/data:/data:Z\n")
+
+	got := runRule(t, "QD003", host, u)
+	if len(got) != 0 {
+		t.Errorf("QD003 fired with SELinux absent from the kernel: %+v", got)
+	}
+}
+
+func TestQD003DowngradesUnderPermissive(t *testing.T) {
+	// Still worth saying under permissive: turning enforcing back on would
+	// break the container, same ladder as QD001/QD002.
+	host := hostctx.Static{
+		SELinuxMode: hostctx.SELinuxPermissive,
+		Mounts: []hostctx.Mount{
+			{MountPoint: "/", FSType: "ext4"},
+			{MountPoint: "/mnt/nfs", FSType: "nfs4"},
+		},
+	}
+	u := unitFromText(t, "web.container",
+		"[Container]\nImage=nginx\nVolume=/mnt/nfs/data:/data:Z\n")
+
+	got := runRule(t, "QD003", host, u)
+	if len(got) != 1 {
+		t.Fatalf("findings = %d, want 1: %+v", len(got), got)
+	}
+	if got[0].Severity != Note {
+		t.Errorf("severity = %v, want Note under permissive", got[0].Severity)
+	}
+}
+
 func TestQD004(t *testing.T) {
 	tests := []struct {
 		name         string

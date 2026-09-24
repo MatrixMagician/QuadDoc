@@ -275,20 +275,32 @@ func checkQD003(c *Context) []Finding {
 				continue
 			}
 
+			// Like QD001/QD002, advice about relabelling is meaningless
+			// without SELinux and is suppressed entirely when it is absent
+			// from the kernel, per ADR-0004.
+			severity, confidence, downgraded, report := selinuxFinding(c, "QD003", Warning)
+			if !report {
+				continue
+			}
+
 			// A filesystem already carrying a context= option has a
 			// whole-filesystem label, and relabelling it is both unnecessary
 			// and ineffective.
 			if strings.Contains(mount.Options, "context=") {
-				findings = append(findings, Finding{
-					Severity:   Warning,
-					Confidence: Confirmed,
+				finding := Finding{
+					Severity:   severity,
+					Confidence: confidence,
 					Unit:       u.Path,
 					Line:       m.Line,
 					Message: fmt.Sprintf("%s is on a filesystem mounted with context=, so the relabelling option does nothing",
 						m.Source),
 					Remediation: "Remove the :z or :Z option. The filesystem already carries a " +
 						"single label set at mount time, which relabelling cannot change.",
-				})
+				}
+				if downgraded {
+					finding = finding.MarkHostDowngraded()
+				}
+				findings = append(findings, finding)
 				continue
 			}
 
@@ -300,9 +312,9 @@ func checkQD003(c *Context) []Finding {
 				continue
 			}
 
-			findings = append(findings, Finding{
-				Severity:   Warning,
-				Confidence: Confirmed,
+			finding := Finding{
+				Severity:   severity,
+				Confidence: confidence,
 				Unit:       u.Path,
 				Line:       m.Line,
 				Message: fmt.Sprintf("%s is on a %s filesystem, where relabelling will not work: %s",
@@ -312,7 +324,11 @@ func checkQD003(c *Context) []Finding {
 					"    context=\"system_u:object_r:container_file_t:s0\"\n\n"+
 					"On a shared filesystem, coordinate that label with whatever else mounts it.",
 					mount.MountPoint),
-			})
+			}
+			if downgraded {
+				finding = finding.MarkHostDowngraded()
+			}
+			findings = append(findings, finding)
 		}
 	}
 	return findings
