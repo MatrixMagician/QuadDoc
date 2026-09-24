@@ -150,11 +150,11 @@ func checkQD010(c *Context) []Finding {
 					"     Best when the host user should keep owning the files, for "+
 					"example a directory you edit yourself.\n\n"+
 					"  2. Let Podman chown the source to the mapped IDs:\n\n"+
-					"         Volume=%s\n\n"+
+					"         %s=%s\n\n"+
 					"     Best when the container owns the data outright. Note that this "+
 					"rewrites ownership on the host and walks every file, so it is slow "+
 					"on large trees.",
-					uid, uid, withOption(m, "U")),
+					uid, uid, m.Key, withOption(m, "U")),
 			})
 		}
 	}

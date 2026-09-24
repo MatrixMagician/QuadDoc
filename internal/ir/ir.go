@@ -94,6 +94,9 @@ type Mount struct {
 	Line int
 	// Raw is the original value, so a fix can rewrite it precisely.
 	Raw string
+	// Key names the key that declared the mount, `Volume` or `Mount`, so a
+	// remediation is written in the syntax the user wrote.
+	Key string
 }
 
 // HasOption reports whether an option is present, case-sensitively. Case

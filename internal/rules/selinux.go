@@ -211,7 +211,7 @@ func checkQD001(c *Context) []Finding {
 						m.Source)),
 				Remediation: fmt.Sprintf("Add %s to the mount, %s:\n\n    %s=%s\n\n"+
 					"Run `quaddoc fix --rule QD001` to apply this.",
-					spellOption(m, option), explanation, m.Key(), withOption(m, option)),
+					spellOption(m, option), explanation, m.Key, withOption(m, option)),
 				// The option was chosen using the project-wide sharing map.
 				// Handing it to the fix engine structurally is what stops the
 				// fix writing a :Z that QD002 would then flag.
@@ -255,7 +255,7 @@ func checkQD002(c *Context) []Finding {
 				Remediation: fmt.Sprintf("Use the shared label instead, in every unit that mounts it:\n\n    %s=%s\n\n"+
 					"There is no mechanical fix here: if these containers were meant to be "+
 					"isolated from each other, give them separate directories rather than "+
-					"weakening the label.", m.Key(), withOption(stripOption(m, "Z"), "z")),
+					"weakening the label.", m.Key, withOption(stripOption(m, "Z"), "z")),
 			}
 			if downgraded {
 				finding = finding.MarkHostDowngraded()
@@ -419,7 +419,7 @@ func pathHasPrefix(path, dir string) bool {
 // that declared it.
 func withOption(m ir.Mount, option string) string {
 	options := append(append([]string{}, m.Options...), option)
-	if m.Key() == "Mount" {
+	if m.Key == "Mount" {
 		return renderMountKeyValue(m, options)
 	}
 	return renderMountValue(m, options)
@@ -427,7 +427,7 @@ func withOption(m ir.Mount, option string) string {
 
 // spellOption spells a normalised option as the mount's own key does.
 func spellOption(m ir.Mount, option string) string {
-	if m.Key() == "Mount" {
+	if m.Key == "Mount" {
 		return ir.MountKeySpelling[option]
 	}
 	return ":" + option

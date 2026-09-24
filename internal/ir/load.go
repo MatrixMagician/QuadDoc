@@ -103,7 +103,7 @@ func FromParsed(f *quadlet.File) *Unit {
 			case "Volume", "Mount":
 				// Each key resets only its own entries. Verified against
 				// Podman 5.8.4.
-				u.Mounts = slices.DeleteFunc(u.Mounts, func(m Mount) bool { return m.Key() == e.Key })
+				u.Mounts = slices.DeleteFunc(u.Mounts, func(m Mount) bool { return m.Key == e.Key })
 				continue
 			case "PublishPort":
 				u.Ports = nil
@@ -175,7 +175,7 @@ func FromParsed(f *quadlet.File) *Unit {
 // (podman-systemd.unit(5)). A source that ends in `.volume` refers to a sibling
 // Quadlet unit, which Podman materialises as a volume named `systemd-$name`.
 func ParseMount(value string, line int) Mount {
-	m := Mount{Line: line, Raw: value}
+	m := Mount{Line: line, Raw: value, Key: "Volume"}
 
 	parts := strings.Split(value, ":")
 	switch len(parts) {
@@ -232,7 +232,7 @@ func ParseMountKey(value string, line int) (Mount, bool) {
 		return Mount{}, false
 	}
 
-	m := Mount{Line: line, Raw: value, Type: MountBind}
+	m := Mount{Line: line, Raw: value, Type: MountBind, Key: "Mount"}
 	var bind bool
 	for _, field := range fields {
 		k, v, hasValue := strings.Cut(field, "=")
@@ -272,18 +272,6 @@ func ParseMountKey(value string, line int) (Mount, bool) {
 // MountKeySpelling gives the `Mount=` spelling of a normalised option, for
 // writing a remediation in the form the user wrote. podman-run(1) --mount.
 var MountKeySpelling = map[string]string{"Z": "relabel=private", "z": "relabel=shared", "U": "U=true", "ro": "ro"}
-
-// Key names the key that declared the mount, `Mount` or `Volume`.
-//
-// It is derived from Raw: a Volume= value parses as a Mount= bind only if its
-// comma-separated fields include `type=bind` and a source, which takes a volume
-// name podman rejects or paths containing `,type=bind`.
-func (m Mount) Key() string {
-	if _, ok := ParseMountKey(m.Raw, m.Line); ok {
-		return "Mount"
-	}
-	return "Volume"
-}
 
 // VolumeObjectName returns the Podman volume name a named-volume source
 // resolves to when the referenced unit sets no VolumeName=. Quadlet prefixes
