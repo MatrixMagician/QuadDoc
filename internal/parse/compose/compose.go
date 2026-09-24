@@ -251,7 +251,16 @@ func normalise(cfg *types.Project, name, workingDir string) *Project {
 	// directory quietly missing a service. Report it and move on.
 	for _, svcName := range sortedKeys(cfg.DisabledServices) {
 		svc := cfg.DisabledServices[svcName]
-		p.Unsupported = append(p.Unsupported, unsupportedFor(svc)...)
+		// unsupportedFor's own "profiles" note assumes the unit was generated
+		// anyway, which is wrong here: this service was dropped entirely. The
+		// precise note appended below replaces it; its other findings (build,
+		// and so on) still apply and are kept.
+		for _, u := range unsupportedFor(svc) {
+			if u.Key == "profiles" {
+				continue
+			}
+			p.Unsupported = append(p.Unsupported, u)
+		}
 		p.Unsupported = append(p.Unsupported, Unsupported{
 			Service: svc.Name,
 			Key:     "profiles",
