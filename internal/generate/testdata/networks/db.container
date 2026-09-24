@@ -5,7 +5,7 @@ Description=db (from compose service db)
 ContainerName=db
 Image=docker.io/library/postgres:16
 Volume=data.volume:/var/lib/postgresql/data
-Volume=shared:/shared
+Volume=team_share:/shared
 Network=networks-backend.network:ip=10.99.0.10
 
 [Service]

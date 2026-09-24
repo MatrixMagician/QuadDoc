@@ -63,5 +63,7 @@ another. Makes lint results reproducible, and doubles as a support workflow.
 
 Quadlet prefixes the Podman objects it creates with `systemd-`: `web.volume`
 creates a volume named `systemd-web`, and `app.network` a network named
-`systemd-app`. Any rule reasoning about real object names, notably QD032's
-collision check, must apply the prefix.
+`systemd-app`, unless the unit sets `VolumeName=` or `NetworkName=`, which
+replace the name outright (`ir.Unit.ObjectName` resolves both). Any rule
+reasoning about real object names, notably QD032's collision check, must
+apply the prefix.

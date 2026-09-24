@@ -126,11 +126,14 @@ type HealthCheck struct {
 
 // Volume is a declared named volume.
 type Volume struct {
-	Name     string
-	Driver   string
-	Options  map[string]string
-	Labels   map[string]string
-	External bool
+	// Name is the compose key. ObjectName is the Podman volume name: compose's
+	// `name:` when set, otherwise the key.
+	Name       string
+	ObjectName string
+	Driver     string
+	Options    map[string]string
+	Labels     map[string]string
+	External   bool
 }
 
 // Network is a declared network.
@@ -321,12 +324,20 @@ func normalise(cfg *types.Project, name, workingDir string) *Project {
 
 	for _, volName := range sortedKeys(cfg.Volumes) {
 		v := cfg.Volumes[volName]
+		// The loader fills in `<project>_<key>` when no `name:` is given.
+		// That default is not taken: VolumeName= has always been the bare
+		// key, and renaming a volume would strand the data already in it.
+		objectName := v.Name
+		if !v.External && v.Name == name+"_"+volName {
+			objectName = volName
+		}
 		p.Volumes = append(p.Volumes, Volume{
-			Name:     volName,
-			Driver:   v.Driver,
-			Options:  v.DriverOpts,
-			Labels:   v.Labels,
-			External: bool(v.External),
+			Name:       volName,
+			ObjectName: objectName,
+			Driver:     v.Driver,
+			Options:    v.DriverOpts,
+			Labels:     v.Labels,
+			External:   bool(v.External),
 		})
 	}
 

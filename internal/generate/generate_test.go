@@ -440,11 +440,14 @@ func TestNetworksReachPodmanIntact(t *testing.T) {
 		}},
 		{service: "db", want: [][]string{
 			{"--network", "networks_backend:ip=10.99.0.10"},
+			{"-v", "pg_data:/var/lib/postgresql/data"},
+			{"-v", "team_share:/shared"},
 		}},
 		{service: "networks-backend-network", want: [][]string{
 			{"create", "--ignore", "--internal", "--subnet", "10.99.0.0/24", "networks_backend"},
 		}},
 		{service: "networks-frontend-network", want: [][]string{{"create", "--ignore", "public_net"}}, reject: []string{"--internal"}},
+		{service: "data-volume", want: [][]string{{"create", "--ignore", "pg_data"}}},
 	}
 	for _, tt := range tests {
 		argv := execStartArgv(t, out, tt.service)
@@ -474,9 +477,34 @@ func TestExternalObjectsAreNoted(t *testing.T) {
 		messages = append(messages, n.Message)
 	}
 	all := strings.Join(messages, "\n")
-	for _, want := range []string{"podman network create corp_lan"} {
+	for _, want := range []string{"podman network create corp_lan", "podman volume create team_share"} {
 		if !strings.Contains(all, want) {
 			t.Errorf("no note says %q; notes were:\n%s", want, all)
+		}
+	}
+}
+
+// TestCommentsNameTheRealObjects checks the annotations against what
+// NetworkName= and VolumeName= make Podman create: the name compose gives the
+// object, not Quadlet's `systemd-` default that those keys override.
+func TestCommentsNameTheRealObjects(t *testing.T) {
+	p, err := compose.Load(filepath.Join("testdata", "networks", "compose.yaml"))
+	if err != nil {
+		t.Fatalf("loading fixture: %v", err)
+	}
+	units := map[string]string{}
+	for _, u := range Convert(p, Options{Annotate: true}).Units {
+		units[u.Name] = u.Content
+	}
+
+	for unit, want := range map[string]string{
+		"networks-frontend.network": "Podman name the network `public_net`",
+		"data.volume":               "Podman name the volume `pg_data`",
+		"db.container":              "materialises as a volume called `pg_data`",
+	} {
+		// Join the comment lines back up, so wrapping cannot split a phrase.
+		if !strings.Contains(strings.ReplaceAll(units[unit], "\n# ", " "), want) {
+			t.Errorf("%s does not say %q:\n%s", unit, want, units[unit])
 		}
 	}
 }
