@@ -9,7 +9,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/MatrixMagician/quaddoc/internal/ir"
 	"github.com/MatrixMagician/quaddoc/internal/parse/compose"
+	"github.com/MatrixMagician/quaddoc/internal/parse/quadlet"
 	"github.com/MatrixMagician/quaddoc/internal/podmantest"
 )
 
@@ -544,6 +546,37 @@ func TestQuotedValuesReachPodmanIntact(t *testing.T) {
 				t.Errorf("%s: argv lacks %q\nargv: %q", tt.service, want, argv)
 			}
 		}
+	}
+}
+
+// TestPairRoundTripsThroughTheIR checks the other half of issue #31: pair()
+// quotes only the value, never the whole NAME=value pair, so whatever value
+// it is given must read back through ir.FromParsed unchanged, whether or not
+// quote() decided the value needed quoting or escaping.
+func TestPairRoundTripsThroughTheIR(t *testing.T) {
+	values := []string{
+		"plain",
+		"has a space",
+		`say "hi"`,
+		`C:\Users\a`,
+		"it's",
+	}
+
+	for _, want := range values {
+		t.Run(want, func(t *testing.T) {
+			line := pair("V", want)
+			text := "[Container]\nImage=nginx\nEnvironment=" + line + "\n"
+
+			f, err := quadlet.Parse("app.container", strings.NewReader(text))
+			if err != nil {
+				t.Fatalf("parse %q: %v", line, err)
+			}
+			u := ir.FromParsed(f)
+
+			if len(u.Environment) != 1 || u.Environment[0].Value != want {
+				t.Errorf("Environment=%s round-tripped to %+v, want value %q", line, u.Environment, want)
+			}
+		})
 	}
 }
 
