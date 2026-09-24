@@ -23,7 +23,7 @@ Every rule cites the documentation or observed behaviour it encodes.
 | [QD032](#qd032) | error |  | Unit name collides with an existing unit or Podman object |
 | [QD040](#qd040) | warning |  | AutoUpdate=registry needs a fully-qualified image reference |
 | [QD041](#qd041) | warning |  | Credential passed as an environment value in the unit file |
-| [QD042](#qd042) | warning |  | Key is not recognised by Quadlet and will be ignored |
+| [QD042](#qd042) | error |  | Key is not recognised by Quadlet, so the unit is not generated |
 
 ## QD000
 
@@ -216,11 +216,11 @@ A unit file is world-readable in the Quadlet search path and is usually committe
 
 ## QD042
 
-**Key is not recognised by Quadlet and will be ignored**
+**Key is not recognised by Quadlet, so the unit is not generated**
 
-- Default severity: `warning`
+- Default severity: `error`
 
-Quadlet reads the keys it knows and ignores the rest without complaint, so a typo'd key looks like configuration that simply does not work. This most often bites when a key is spelled as its podman flag (Volumes= for Volume=) or as the compose key it came from.
+The Quadlet generator rejects a unit that sets a key its section does not support: it logs "unsupported key" and creates no service for that unit, so `systemctl start` then reports the unit as not found. This most often bites when a key is spelled as its podman flag (Volumes= for Volume=) or as the compose key it came from.
 
-*Source: podman-systemd.unit(5) lists the keys each unit type accepts. The set is generated from the installed manual page by internal/rules/genkeys; see docs/adr/0002-minimum-podman-version.md for why per-version deltas are not attempted in v1.*
+*Source: podman-systemd.unit(5) lists the keys each unit type accepts. The set is generated from the installed manual page by internal/rules/genkeys; see docs/adr/0002-minimum-podman-version.md for why per-version deltas are not attempted in v1. The rejection is Podman's checkForUnknownKeys (pkg/systemd/quadlet/quadlet.go), which returns "unsupported key '%s' in group '%s'" for the whole unit in both 5.0.0 and 5.8.4, the ends of the supported range; observed with quadlet -dryrun on 5.8.4. The 5.8.4 source also accepts ServiceName= in every unit section and LogOpt= in [Kube], and still honours the deprecated RemapUsers=, RemapUid=, RemapGid=, RemapUidSize= and VolatileTmp=, none of which the manual page lists for those sections.*
 

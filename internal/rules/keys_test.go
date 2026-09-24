@@ -1,10 +1,15 @@
 package rules
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/MatrixMagician/quaddoc/internal/hostctx"
+	"github.com/MatrixMagician/quaddoc/internal/ir"
+	"github.com/MatrixMagician/quaddoc/internal/podmantest"
 )
 
 func TestQD042(t *testing.T) {
@@ -13,6 +18,7 @@ func TestQD042(t *testing.T) {
 		unit         string
 		text         string
 		wantFindings int
+		wantSeverity Severity
 		wantContains string
 	}{
 		{
@@ -25,19 +31,64 @@ func TestQD042(t *testing.T) {
 			name:         "the podman flag spelling is a common mistake",
 			unit:         "web.container",
 			text:         "[Container]\nImage=nginx\nVolumes=/srv:/data\n",
-			wantFindings: 1, wantContains: "did you mean Volume=?",
+			wantFindings: 1, wantSeverity: Error, wantContains: "did you mean Volume=?",
 		},
 		{
 			name:         "the compose spelling is a common mistake",
 			unit:         "web.container",
 			text:         "[Container]\nImage=nginx\nPorts=8080:80\n",
-			wantFindings: 1, wantContains: "PublishPort=",
+			wantFindings: 1, wantSeverity: Error, wantContains: "PublishPort=",
 		},
 		{
+			// Podman 5.8.4: "unsupported key 'Frobnicate' in group
+			// 'Container'", and no service is generated for the unit.
 			name:         "an invented key is reported without a suggestion",
 			unit:         "web.container",
 			text:         "[Container]\nImage=nginx\nFrobnicate=yes\n",
-			wantFindings: 1, wantContains: "will be ignored",
+			wantFindings: 1, wantSeverity: Error,
+			wantContains: "Frobnicate= is not a Quadlet key for [Container], so the generator rejects web.container and creates no service for it",
+		},
+		{
+			// quadlet -dryrun on Podman 5.8.4 emits frontend.service.
+			name:         "ServiceName= is honoured in a container unit",
+			unit:         "web.container",
+			text:         "[Container]\nImage=nginx\nServiceName=frontend\n",
+			wantFindings: 0,
+		},
+		{
+			name:         "ServiceName= is honoured in a volume unit",
+			unit:         "data.volume",
+			text:         "[Volume]\nServiceName=data-volume\n",
+			wantFindings: 0,
+		},
+		{
+			name:         "ServiceName= is honoured in a network unit",
+			unit:         "app.network",
+			text:         "[Network]\nServiceName=app-net\n",
+			wantFindings: 0,
+		},
+		{
+			// The generator still honours the deprecated keys, so they
+			// are not unknown, just superseded.
+			name:         "a deprecated key still works and is a note",
+			unit:         "web.container",
+			text:         "[Container]\nImage=nginx\nRemapUsers=keep-id\n",
+			wantFindings: 1, wantSeverity: Note,
+			wantContains: "RemapUsers= is deprecated; the generator still honours it",
+		},
+		{
+			name:         "VolatileTmp= is deprecated in favour of Tmpfs=",
+			unit:         "web.container",
+			text:         "[Container]\nImage=nginx\nVolatileTmp=true\n",
+			wantFindings: 1, wantSeverity: Note,
+			wantContains: "Tmpfs=/tmp",
+		},
+		{
+			// VolatileTmp= was only ever a [Container] key.
+			name:         "a deprecated key in a section that never had it is unknown",
+			unit:         "demo.pod",
+			text:         "[Pod]\nVolatileTmp=true\n",
+			wantFindings: 1, wantSeverity: Error,
 		},
 		{
 			// Verified against Podman 5.8.4: the generator rejects this unit
@@ -45,7 +96,7 @@ func TestQD042(t *testing.T) {
 			name:         "keys are matched case-sensitively, as the generator does",
 			unit:         "web.container",
 			text:         "[Container]\nImage=nginx\nimage=nginx\n",
-			wantFindings: 1, wantContains: "did you mean Image=?",
+			wantFindings: 1, wantSeverity: Error, wantContains: "did you mean Image=?",
 		},
 		{
 			// [Unit], [Service], and [Install] pass straight through to
@@ -66,7 +117,7 @@ func TestQD042(t *testing.T) {
 			name:         "a container key in a volume unit is wrong",
 			unit:         "data.volume",
 			text:         "[Volume]\nVolumeName=data\nPublishPort=80:80\n",
-			wantFindings: 1,
+			wantFindings: 1, wantSeverity: Error,
 		},
 	}
 
@@ -77,6 +128,9 @@ func TestQD042(t *testing.T) {
 
 			if len(got) != tt.wantFindings {
 				t.Fatalf("findings = %d, want %d: %+v", len(got), tt.wantFindings, got)
+			}
+			if tt.wantFindings > 0 && got[0].Severity != tt.wantSeverity {
+				t.Errorf("severity = %v, want %v", got[0].Severity, tt.wantSeverity)
 			}
 			if tt.wantContains != "" &&
 				!strings.Contains(got[0].Message, tt.wantContains) &&
@@ -126,5 +180,53 @@ func TestQD042NamesThePodmanItCheckedAgainst(t *testing.T) {
 	if !strings.Contains(got[0].Remediation, generatedFromPodman) {
 		t.Errorf("remediation does not say which Podman the key set came from:\n%s",
 			got[0].Remediation)
+	}
+}
+
+// TestQD042MatchesTheGenerator pins the rule's premise to the real generator:
+// it rejects a unit carrying a key outside its section's table, and accepts
+// the keys QD042 lets through, deprecated ones included.
+func TestQD042MatchesTheGenerator(t *testing.T) {
+	generator := podmantest.Generator(t)
+
+	rejected := t.TempDir()
+	writeUnit(t, rejected, "web.container", "[Container]\nImage=docker.io/library/nginx:1.27\nFrobnicate=yes\n")
+	cmd := exec.Command(generator, "-dryrun", "-user")
+	cmd.Env = append(os.Environ(), "QUADLET_UNIT_DIRS="+rejected)
+	out, err := cmd.CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "unsupported key 'Frobnicate' in group 'Container'") {
+		t.Errorf("expected the generator to reject the unknown key, got err=%v:\n%s", err, out)
+	}
+
+	accepted := map[string]string{
+		"web.container": "[Container]\nImage=docker.io/library/nginx:1.27\nServiceName=frontend\n" +
+			"RemapUsers=manual\nRemapUid=0:1000:1\nRemapGid=0:1000:1\nVolatileTmp=true\n",
+		"data.volume":   "[Volume]\nServiceName=data-volume\n",
+		"app.network":   "[Network]\nServiceName=app-net\n",
+		"demo.pod":      "[Pod]\nServiceName=demo-pod\nRemapUsers=auto\nRemapUidSize=100\n",
+		"app.kube":      "[Kube]\nYaml=/dev/null\nServiceName=app-kube\nRemapUsers=keep-id\nLogOpt=tag=app\n",
+		"img.build":     "[Build]\nImageTag=localhost/img:1\nFile=/dev/null\nServiceName=img-build\n",
+		"base.image":    "[Image]\nImage=docker.io/library/busybox:1\nServiceName=base-image\n",
+		"blob.artifact": "[Artifact]\nArtifact=quay.io/example/blob:1\nServiceName=blob-artifact\n",
+	}
+	dir := t.TempDir()
+	var units []*ir.Unit
+	for name, text := range accepted {
+		writeUnit(t, dir, name, text)
+		units = append(units, unitFromText(t, name, text))
+	}
+	podmantest.AssertAccepts(t, generator, dir)
+
+	for _, f := range runRule(t, "QD042", hostctx.Unknown{}, units...) {
+		if f.Severity != Note {
+			t.Errorf("the generator accepts %s, but QD042 reports it as %v: %s", f.Unit, f.Severity, f.Message)
+		}
+	}
+}
+
+func writeUnit(t *testing.T, dir, name, text string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }
