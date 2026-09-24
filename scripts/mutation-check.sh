@@ -184,7 +184,12 @@ open(p,'w').write(s)"
 
 run_mutation "generator drops the shared network" "internal/generate/generate.go" ./internal/generate "
 p='internal/generate/generate.go'; s=open(p).read()
-s=s.replace('\t\tu.key(\"Network\", networkUnit+\".network\")','')
+s=s.replace('\t\t\t\tu.key(\"Network\", networkRef(p, sn))','')
+open(p,'w').write(s)"
+
+run_mutation "generator ignores network_mode" "internal/generate/generate.go" ./internal/generate "
+p='internal/generate/generate.go'; s=open(p).read()
+s=s.replace('case mode == \"\":','case true:')
 open(p,'w').write(s)"
 
 run_mutation "unless-stopped passed through verbatim" "internal/generate/generate.go" ./internal/generate "

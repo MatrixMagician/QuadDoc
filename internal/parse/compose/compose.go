@@ -50,7 +50,10 @@ type Service struct {
 	Environment []EnvVar
 	Volumes     []Mount
 	Ports       []Port
-	Networks    []string
+	// NetworkMode is compose's `network_mode`, empty when the service joins
+	// Networks instead.
+	NetworkMode string
+	Networks    []ServiceNetwork
 	DependsOn   []Dependency
 	HealthCheck *HealthCheck
 	CapAdd      []string
@@ -86,6 +89,15 @@ type Mount struct {
 	SELinux string
 }
 
+// ServiceNetwork is one entry of a service's `networks:`, naming a declared
+// network by its compose key.
+type ServiceNetwork struct {
+	Name        string
+	Aliases     []string
+	IPv4Address string
+	IPv6Address string
+}
+
 // Port is one published port.
 type Port struct {
 	HostIP    string
@@ -114,20 +126,26 @@ type HealthCheck struct {
 
 // Volume is a declared named volume.
 type Volume struct {
-	Name     string
-	Driver   string
-	Options  map[string]string
-	Labels   map[string]string
-	External bool
+	// Name is the compose key. ObjectName is the Podman volume name: compose's
+	// `name:` when set, otherwise the key.
+	Name       string
+	ObjectName string
+	Driver     string
+	Options    map[string]string
+	Labels     map[string]string
+	External   bool
 }
 
 // Network is a declared network.
 type Network struct {
-	Name     string
-	Driver   string
-	Internal bool
-	Labels   map[string]string
-	External bool
+	// Name is the compose key. ObjectName is the Podman network name: compose's
+	// `name:` when set, otherwise `<project>_<key>` as compose itself names it.
+	Name       string
+	ObjectName string
+	Driver     string
+	Internal   bool
+	Labels     map[string]string
+	External   bool
 	// Subnets are the configured IPAM subnets.
 	Subnets []string
 	Gateway string
@@ -253,8 +271,15 @@ func normalise(cfg *types.Project, name, workingDir string) *Project {
 			})
 		}
 
-		for _, netName := range sortedNetworkKeys(svc.Networks) {
-			s.Networks = append(s.Networks, netName)
+		s.NetworkMode = svc.NetworkMode
+		for _, netName := range sortedKeys(svc.Networks) {
+			sn := ServiceNetwork{Name: netName}
+			if cfg := svc.Networks[netName]; cfg != nil {
+				sn.Aliases = cfg.Aliases
+				sn.IPv4Address = cfg.Ipv4Address
+				sn.IPv6Address = cfg.Ipv6Address
+			}
+			s.Networks = append(s.Networks, sn)
 		}
 
 		for _, dep := range sortedKeys(svc.DependsOn) {
@@ -299,23 +324,32 @@ func normalise(cfg *types.Project, name, workingDir string) *Project {
 
 	for _, volName := range sortedKeys(cfg.Volumes) {
 		v := cfg.Volumes[volName]
+		// The loader fills in `<project>_<key>` when no `name:` is given.
+		// That default is not taken: VolumeName= has always been the bare
+		// key, and renaming a volume would strand the data already in it.
+		objectName := v.Name
+		if !v.External && v.Name == name+"_"+volName {
+			objectName = volName
+		}
 		p.Volumes = append(p.Volumes, Volume{
-			Name:     volName,
-			Driver:   v.Driver,
-			Options:  v.DriverOpts,
-			Labels:   v.Labels,
-			External: bool(v.External),
+			Name:       volName,
+			ObjectName: objectName,
+			Driver:     v.Driver,
+			Options:    v.DriverOpts,
+			Labels:     v.Labels,
+			External:   bool(v.External),
 		})
 	}
 
 	for _, netName := range sortedKeys(cfg.Networks) {
 		n := cfg.Networks[netName]
 		network := Network{
-			Name:     netName,
-			Driver:   n.Driver,
-			Internal: n.Internal,
-			Labels:   n.Labels,
-			External: bool(n.External),
+			Name:       netName,
+			ObjectName: n.Name,
+			Driver:     n.Driver,
+			Internal:   n.Internal,
+			Labels:     n.Labels,
+			External:   bool(n.External),
 		}
 		for _, pool := range n.Ipam.Config {
 			if pool.Subnet != "" {
@@ -388,15 +422,6 @@ func unsupportedFor(svc types.ServiceConfig) []Unsupported {
 }
 
 func sortedKeys[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
-func sortedNetworkKeys(m map[string]*types.ServiceNetworkConfig) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)

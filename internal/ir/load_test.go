@@ -332,6 +332,39 @@ func TestVolumeObjectNameAppliesTheSystemdPrefix(t *testing.T) {
 	}
 }
 
+func TestObjectNameHonoursVolumeNameAndNetworkName(t *testing.T) {
+	// Verified against Podman 5.8.4: VolumeName= and NetworkName= replace the
+	// systemd- default, so `data.volume` with VolumeName=pg_data creates pg_data.
+	p, err := LoadProject(writeUnits(t, map[string]string{
+		"data.volume":   "[Volume]\nVolumeName=pg_data\n",
+		"pg.volume":     "[Volume]\n",
+		"front.network": "[Network]\nNetworkName=public_net\n",
+		"back.network":  "[Network]\n",
+	}))
+	if err != nil {
+		t.Fatalf("loading: %v", err)
+	}
+
+	for _, tt := range []struct {
+		name string
+		kind UnitKind
+		want string
+	}{
+		{"data", KindVolume, "pg_data"},
+		{"pg", KindVolume, "systemd-pg"},
+		{"front", KindNetwork, "public_net"},
+		{"back", KindNetwork, "systemd-back"},
+	} {
+		u, ok := p.UnitByName(tt.name, tt.kind)
+		if !ok {
+			t.Fatalf("no %s.%s loaded", tt.name, tt.kind)
+		}
+		if got := u.ObjectName(); got != tt.want {
+			t.Errorf("%s.%s ObjectName() = %q, want %q", tt.name, tt.kind, got, tt.want)
+		}
+	}
+}
+
 func TestLoadUnitReportsAMissingFile(t *testing.T) {
 	if _, err := LoadUnit(filepath.Join(t.TempDir(), "nope.container")); err == nil {
 		t.Error("a missing file should be an error")

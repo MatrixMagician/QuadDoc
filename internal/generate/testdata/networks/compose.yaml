@@ -1,0 +1,50 @@
+# Network translations that were lost before issue #20: network_mode, several
+# networks with different isolation, per-network aliases and addresses,
+# external networks and volumes, and explicit object names.
+services:
+  hostnet:
+    image: docker.io/library/alpine:3.20
+    network_mode: host
+  isolated:
+    image: docker.io/library/alpine:3.20
+    network_mode: none
+  sidecar:
+    image: docker.io/library/alpine:3.20
+    network_mode: "service:web"
+  joined:
+    image: docker.io/library/alpine:3.20
+    network_mode: "container:legacy"
+  web:
+    image: docker.io/library/nginx:1.27
+    networks:
+      frontend:
+        aliases: [www, site]
+      backend:
+      corp:
+  db:
+    image: docker.io/library/postgres:16
+    volumes:
+      - data:/var/lib/postgresql/data
+      - shared:/shared
+    networks:
+      backend:
+        ipv4_address: 10.99.0.10
+
+networks:
+  frontend:
+    name: public_net
+  backend:
+    internal: true
+    ipam:
+      config:
+        - subnet: 10.99.0.0/24
+  corp:
+    external: true
+    name: corp_lan
+
+volumes:
+  data:
+    name: pg_data
+  shared:
+    external: true
+    name: team_share

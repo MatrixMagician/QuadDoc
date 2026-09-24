@@ -189,13 +189,33 @@ func ParseMount(value string, line int) Mount {
 }
 
 // VolumeObjectName returns the Podman volume name a named-volume source
-// resolves to. Quadlet prefixes volumes it creates with `systemd-`, so
-// `pg.volume` becomes `systemd-pg`. Verified against Podman 5.8.4.
+// resolves to when the referenced unit sets no VolumeName=. Quadlet prefixes
+// volumes it creates with `systemd-`, so `pg.volume` becomes `systemd-pg`.
+// Verified against Podman 5.8.4. The .volume unit's ObjectName is the name
+// whatever the unit sets.
 func (m Mount) VolumeObjectName() string {
 	if m.UnitRef != "" {
 		return "systemd-" + m.UnitRef
 	}
 	return m.Source
+}
+
+// ObjectName returns the name of the Podman object a .volume or .network unit
+// creates: its VolumeName= or NetworkName= when set, otherwise Quadlet's
+// default of `systemd-` and the unit name (podman-systemd.unit(5)). Verified
+// against Podman 5.8.4. Other kinds return "".
+func (u *Unit) ObjectName() string {
+	key := map[UnitKind]string{KindVolume: "VolumeName", KindNetwork: "NetworkName"}[u.Kind]
+	if key == "" {
+		return ""
+	}
+	if u.Source != nil {
+		// The last assignment wins, as it does for systemd.
+		if vs := u.Source.Values(u.Kind.Section(), key); len(vs) > 0 && vs[len(vs)-1] != "" {
+			return vs[len(vs)-1]
+		}
+	}
+	return "systemd-" + u.Name
 }
 
 // ParsePort decomposes one `PublishPort=` value.

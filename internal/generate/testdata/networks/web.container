@@ -1,0 +1,15 @@
+[Unit]
+Description=web (from compose service web)
+
+[Container]
+ContainerName=web
+Image=docker.io/library/nginx:1.27
+Network=networks-backend.network
+Network=corp_lan
+Network=networks-frontend.network:alias=www,alias=site
+
+[Service]
+Restart=no
+
+[Install]
+WantedBy=default.target

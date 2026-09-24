@@ -1,5 +1,5 @@
 [Network]
-NetworkName=quoting
+NetworkName=quoting_default
 
 [Install]
 WantedBy=default.target

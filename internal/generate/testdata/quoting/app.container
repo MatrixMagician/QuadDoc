@@ -13,7 +13,7 @@ Environment=HOMEISH=50%%h
 Environment=PCT=100%%
 Environment=PLAIN=plain
 Environment=QUOTED="say \"hi\""
-Network=quoting-net.network
+Network=quoting-default.network
 Sysctl=net.ipv4.ping_group_range="0 1000"
 Label=description="a label with spaces"
 HealthCmd=["CMD","test","-f","/tmp/my file"]

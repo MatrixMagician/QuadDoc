@@ -6,7 +6,7 @@ ContainerName=shell
 Image=docker.io/library/alpine:3.20
 Entrypoint=/entrypoint.sh
 Exec=sh -c "echo one two; sleep inf"
-Network=quoting-net.network
+Network=quoting-default.network
 HealthCmd=test -f /tmp/ready || exit 1
 
 [Service]
