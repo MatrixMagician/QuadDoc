@@ -114,6 +114,26 @@ func TestQD042(t *testing.T) {
 			wantFindings: 0,
 		},
 		{
+			name:         "kube unit keys are checked against the kube section",
+			unit:         "app.kube",
+			text:         "[Kube]\nYaml=app.yaml\nYamll=typo.yaml\n",
+			wantFindings: 1, wantSeverity: Error,
+			wantContains: "Yamll= is not a Quadlet key for [Kube], so the generator rejects app.kube",
+		},
+		{
+			name:         "build unit keys are checked against the build section",
+			unit:         "img.build",
+			text:         "[Build]\nImageTag=localhost/img:1\nFil=Containerfile\n",
+			wantFindings: 1, wantSeverity: Error,
+			wantContains: "Fil= is not a Quadlet key for [Build]",
+		},
+		{
+			name:         "image and artifact units are checked too",
+			unit:         "blob.artifact",
+			text:         "[Artifact]\nArtifact=quay.io/example/blob:1\nImage=x\n",
+			wantFindings: 1, wantSeverity: Error,
+		},
+		{
 			name:         "a container key in a volume unit is wrong",
 			unit:         "data.volume",
 			text:         "[Volume]\nVolumeName=data\nPublishPort=80:80\n",

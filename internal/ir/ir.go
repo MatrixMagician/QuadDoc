@@ -17,29 +17,37 @@ import (
 )
 
 // UnitKind is the type of a Quadlet unit, determined by its file extension.
+// The value is the extension, so `name + "." + kind` is the file name.
 type UnitKind string
 
+// The unit types podman-systemd.unit(5) documents, as of Podman 5.8.4.
 const (
 	KindContainer UnitKind = "container"
 	KindVolume    UnitKind = "volume"
 	KindNetwork   UnitKind = "network"
 	KindPod       UnitKind = "pod"
+	KindKube      UnitKind = "kube"
+	KindBuild     UnitKind = "build"
+	KindImage     UnitKind = "image"
+	KindArtifact  UnitKind = "artifact"
 	KindUnknown   UnitKind = "unknown"
 )
 
+// sections maps each unit kind to the Quadlet section it is configured in.
+var sections = map[UnitKind]string{
+	KindContainer: "Container",
+	KindVolume:    "Volume",
+	KindNetwork:   "Network",
+	KindPod:       "Pod",
+	KindKube:      "Kube",
+	KindBuild:     "Build",
+	KindImage:     "Image",
+	KindArtifact:  "Artifact",
+}
+
 // Section returns the Quadlet section name a unit kind uses, e.g. `[Container]`.
 func (k UnitKind) Section() string {
-	switch k {
-	case KindContainer:
-		return "Container"
-	case KindVolume:
-		return "Volume"
-	case KindNetwork:
-		return "Network"
-	case KindPod:
-		return "Pod"
-	}
-	return ""
+	return sections[k]
 }
 
 // KindFromPath derives the unit kind from a file name's extension.
@@ -48,15 +56,8 @@ func KindFromPath(path string) UnitKind {
 	if i < 0 {
 		return KindUnknown
 	}
-	switch strings.ToLower(path[i+1:]) {
-	case "container":
-		return KindContainer
-	case "volume":
-		return KindVolume
-	case "network":
-		return KindNetwork
-	case "pod":
-		return KindPod
+	if kind := UnitKind(strings.ToLower(path[i+1:])); sections[kind] != "" {
+		return kind
 	}
 	return KindUnknown
 }

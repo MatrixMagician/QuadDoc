@@ -76,10 +76,11 @@ func checkQD022(c *Context) []Finding {
 	var findings []Finding
 
 	for _, u := range c.Project.Units {
-		// Only units that generate a service can autostart. Volume and
-		// network units are pulled in as dependencies of the containers that
-		// reference them, so they need no [Install] of their own.
-		if u.Kind != ir.KindContainer && u.Kind != ir.KindPod {
+		// Only units that generate a long-running service can autostart.
+		// Volume, network, build, image and artifact units are one-shots
+		// pulled in as dependencies of the units that reference them, so
+		// they need no [Install] of their own (podman-systemd.unit(5)).
+		if u.Kind != ir.KindContainer && u.Kind != ir.KindPod && u.Kind != ir.KindKube {
 			continue
 		}
 

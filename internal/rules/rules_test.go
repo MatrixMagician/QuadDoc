@@ -113,6 +113,35 @@ func TestQD022(t *testing.T) {
 			wantFindings: 0,
 		},
 		{
+			// podman-systemd.unit(5): Quadlet sets Type=notify for .kube, as
+			// for .container, so a kube unit is a long-running service.
+			name:         "a kube unit generates a service and needs an [Install]",
+			unit:         "app.kube",
+			text:         "[Kube]\nYaml=app.yaml\n",
+			wantFindings: 1, wantSeverity: Error,
+		},
+		{
+			name: "a one-shot kube unit is a note",
+			unit: "app.kube",
+			text: "[Kube]\nYaml=app.yaml\n" +
+				"[Service]\nType=oneshot\n",
+			wantFindings: 1, wantSeverity: Note,
+		},
+		{
+			// Quadlet sets Type=oneshot for these and pulls them in as
+			// dependencies of the units that reference them.
+			name:         "build units need no [Install]",
+			unit:         "img.build",
+			text:         "[Build]\nImageTag=localhost/img:1\n",
+			wantFindings: 0,
+		},
+		{
+			name:         "image units need no [Install]",
+			unit:         "base.image",
+			text:         "[Image]\nImage=docker.io/library/busybox:1\n",
+			wantFindings: 0,
+		},
+		{
 			name:         "a pod itself does need an [Install]",
 			unit:         "demo.pod",
 			text:         "[Pod]\nPodName=demo\n",
