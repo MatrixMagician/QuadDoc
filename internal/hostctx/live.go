@@ -265,25 +265,29 @@ func (l *Live) UnprivilegedPortStart() (int, bool) {
 }
 
 // quadletSearchPath returns the directories Quadlet reads units from, in
-// precedence order, as documented in podman-systemd.unit(5).
+// precedence order. Rootful and rootless Podman have separate lists, per
+// podman-systemd.unit(5) (checked against Podman 5.8), sections "Podman
+// rootful unit search path" and "Podman rootless unit search path".
 func (l *Live) quadletSearchPath() []string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		home = os.Getenv("HOME")
+	if rootless, _ := l.Rootless(); !rootless {
+		return []string{
+			"/run/containers/systemd",
+			"/etc/containers/systemd",
+			"/usr/share/containers/systemd",
+		}
 	}
 
-	paths := []string{
-		filepath.Join(home, ".config/containers/systemd"),
-		filepath.Join(home, ".local/share/containers/systemd"),
-		"/etc/containers/systemd/users",
-		"/run/containers/systemd",
-		"/etc/containers/systemd",
-		"/usr/share/containers/systemd",
+	var paths []string
+	if runtime := os.Getenv("XDG_RUNTIME_DIR"); runtime != "" {
+		paths = append(paths, filepath.Join(runtime, "containers/systemd"))
 	}
-	if config := os.Getenv("XDG_CONFIG_HOME"); config != "" {
-		paths = append([]string{filepath.Join(config, "containers/systemd")}, paths...)
+	// $XDG_CONFIG_HOME, or ~/.config when it is unset.
+	if config, err := os.UserConfigDir(); err == nil {
+		paths = append(paths, filepath.Join(config, "containers/systemd"))
 	}
-	return paths
+	return append(paths,
+		filepath.Join("/etc/containers/systemd/users", strconv.Itoa(os.Getuid())),
+		"/etc/containers/systemd/users")
 }
 
 // ExistingUnitNames lists units already installed in the Quadlet search path.

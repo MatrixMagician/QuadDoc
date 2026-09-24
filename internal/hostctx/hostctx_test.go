@@ -3,6 +3,8 @@ package hostctx
 import (
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -231,6 +233,45 @@ func TestNoSubIDEntryIsKnownToBeNone(t *testing.T) {
 	ranges, known := NewReplay(dst).SubUIDRanges()
 	if !known || len(ranges) != 0 {
 		t.Errorf("replayed SubUIDRanges = %v/%v, want none/true", ranges, known)
+	}
+}
+
+func TestSearchPathFollowsRootlessness(t *testing.T) {
+	// podman-systemd.unit(5) gives rootless and rootful Podman separate unit
+	// search paths. Mixing them reports collisions with units the other mode
+	// never loads, and misses the per-UID and runtime directories.
+	uid := strconv.Itoa(os.Getuid())
+	t.Setenv("HOME", "/home/tester")
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("XDG_RUNTIME_DIR", "/run/user/"+uid)
+
+	dir := t.TempDir()
+	for _, p := range []string{
+		"/run/containers/systemd/rootful-run.container",
+		"/etc/containers/systemd/rootful-etc.container",
+		"/usr/share/containers/systemd/rootful-usr.container",
+		"/run/user/" + uid + "/containers/systemd/rootless-runtime.container",
+		"/home/tester/.config/containers/systemd/rootless-config.container",
+		"/etc/containers/systemd/users/" + uid + "/rootless-uid.container",
+		"/etc/containers/systemd/users/rootless-users.container",
+		"/home/tester/.local/share/containers/systemd/neither.container",
+	} {
+		writeFile(t, filepath.Join(dir, p), "")
+	}
+
+	tests := map[string][]string{
+		"true":  {"rootless-config.container", "rootless-runtime.container", "rootless-uid.container", "rootless-users.container"},
+		"false": {"rootful-etc.container", "rootful-run.container", "rootful-usr.container"},
+	}
+	for rootless, want := range tests {
+		t.Run("rootless="+rootless, func(t *testing.T) {
+			writeFile(t, filepath.Join(dir, "quaddoc-rootless"), rootless+"\n")
+			names, _ := NewReplay(dir).ExistingUnitNames()
+			got := slices.Sorted(slices.Values(names))
+			if !slices.Equal(got, want) {
+				t.Errorf("units found = %v, want %v", got, want)
+			}
+		})
 	}
 }
 

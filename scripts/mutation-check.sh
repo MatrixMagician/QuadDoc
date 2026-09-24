@@ -142,6 +142,11 @@ p='internal/hostctx/live.go'; s=open(p).read()
 s=s.replace('\tranges := []IDRange{}\n','\tvar ranges []IDRange\n')
 open(p,'w').write(s)"
 
+run_mutation "rootful reads the rootless search path" "internal/hostctx/live.go" ./internal/hostctx "
+p='internal/hostctx/live.go'; s=open(p).read()
+s=s.replace('\tif rootless, _ := l.Rootless(); !rootless {','\tif false {')
+open(p,'w').write(s)"
+
 run_mutation "capture copies unit file contents" "internal/hostctx/live.go" ./internal/hostctx "
 p='internal/hostctx/live.go'; s=open(p).read()
 s=s.replace('os.WriteFile(filepath.Join(unitDir, name), nil, 0o644)','os.WriteFile(filepath.Join(unitDir, name), []byte(\"[Container]\\nEnvironment=SECRET=hunter2\\n\"), 0o644)')
