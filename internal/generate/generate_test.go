@@ -389,12 +389,16 @@ func TestQuotedValuesReachPodmanIntact(t *testing.T) {
 	}{
 		{service: "app", want: [][]string{
 			{`--entrypoint=["/bin/sh","-c"]`},
+			{"--env", "DATE_FMT=%Y-%m-%d"},
+			{"--env", "DOLLAR=cost $HOME"},
 			{"--env", "GREETING=hello world"},
+			{"--env", "HOMEISH=50%h"},
+			{"--env", "PCT=100%"},
 			{"--env", `QUOTED=say "hi"`},
 			{"--sysctl", "net.ipv4.ping_group_range=0 1000"},
 			{"--label", "description=a label with spaces"},
 			{"--health-cmd", `["CMD","test","-f","/tmp/my file"]`},
-			{"docker.io/library/alpine:3.20", `echo "hi there"; sleep inf`, "hello world", "&&"},
+			{"docker.io/library/alpine:3.20", `echo "$0" "$1"; sleep inf`, "hello world", "&&"},
 		}},
 		{service: "shell", want: [][]string{
 			{"--entrypoint=/entrypoint.sh"},

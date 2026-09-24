@@ -4,10 +4,14 @@ services:
   app:
     image: docker.io/library/alpine:3.20
     entrypoint: ["/bin/sh", "-c"]
-    command: ["echo \"hi there\"; sleep inf", "hello world", "&&"]
+    command: ["echo \"$$0\" \"$$1\"; sleep inf", "hello world", "&&"]
     environment:
       GREETING: "hello world"
       QUOTED: 'say "hi"'
+      PCT: "100%"
+      DATE_FMT: "%Y-%m-%d"
+      HOMEISH: "50%h"
+      DOLLAR: "cost $$HOME"
       PLAIN: "plain"
     labels:
       description: "a label with spaces"

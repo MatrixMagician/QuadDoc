@@ -93,6 +93,12 @@ func (u *builder) key(key, value string) {
 	if value == "" {
 		return
 	}
+	// systemd expands specifiers and variables in the podman command line
+	// Quadlet builds from these values, and Quadlet deliberately passes them
+	// through, so a literal `%` or `$` must be doubled here. See the
+	// "Specifiers" section of systemd.unit(5) and "Command lines" in
+	// systemd.service(5); verified against Podman 5.8.4.
+	value = strings.NewReplacer("%", "%%", "$", "$$").Replace(value)
 	fmt.Fprintf(&u.b, "%s=%s\n", key, value)
 }
 

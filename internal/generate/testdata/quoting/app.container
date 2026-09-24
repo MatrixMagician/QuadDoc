@@ -5,8 +5,12 @@ Description=app (from compose service app)
 ContainerName=app
 Image=docker.io/library/alpine:3.20
 Entrypoint=["/bin/sh","-c"]
-Exec="echo \"hi there\"; sleep inf" "hello world" &&
+Exec="echo \"$$0\" \"$$1\"; sleep inf" "hello world" &&
+Environment=DATE_FMT=%%Y-%%m-%%d
+Environment=DOLLAR="cost $$HOME"
 Environment=GREETING="hello world"
+Environment=HOMEISH=50%%h
+Environment=PCT=100%%
 Environment=PLAIN=plain
 Environment=QUOTED="say \"hi\""
 Network=quoting-net.network
