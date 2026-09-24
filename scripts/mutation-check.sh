@@ -197,6 +197,31 @@ p='internal/generate/generate.go'; s=open(p).read()
 s=s.replace('\t\treturn \"always\", \"compose used \`restart: unless-stopped\`','\t\treturn \"unless-stopped\", \"compose used \`restart: unless-stopped\`')
 open(p,'w').write(s)"
 
+run_mutation "required: false still yields Requires=" "internal/generate/generate.go" ./internal/generate "
+p='internal/generate/generate.go'; s=open(p).read()
+s=s.replace('\t\tif dep.Required {','\t\tif true {')
+open(p,'w').write(s)"
+
+run_mutation "long-syntax tmpfs becomes a volume" "internal/generate/generate.go" ./internal/generate "
+p='internal/generate/generate.go'; s=open(p).read()
+s=s.replace('\t\tif m.Type == \"tmpfs\" {','\t\tif false {')
+open(p,'w').write(s)"
+
+run_mutation "container_name drops the service-name alias" "internal/generate/generate.go" ./internal/generate "
+p='internal/generate/generate.go'; s=open(p).read()
+s=s.replace('\t\t\t\t\tsn.Aliases = append([]string{s.Name}, sn.Aliases...)','\t\t\t\t\t_ = sn')
+open(p,'w').write(s)"
+
+run_mutation "healthcheck test NONE is ignored" "internal/parse/compose/compose.go" ./internal/generate "
+p='internal/parse/compose/compose.go'; s=open(p).read()
+s=s.replace('Disabled: hc.Disable || (len(hc.Test) > 0 && hc.Test[0] == \"NONE\"),','Disabled: hc.Disable,')
+open(p,'w').write(s)"
+
+run_mutation "compose notes follow map order" "internal/parse/compose/compose.go" ./internal/parse/compose "
+p='internal/parse/compose/compose.go'; s=open(p).read()
+s=s.replace('\tfor _, svcName := range sortedKeys(cfg.Services) {\n\t\tsvc := cfg.Services[svcName]','\tfor _, svc := range cfg.Services {')
+open(p,'w').write(s)"
+
 run_mutation "SARIF ruleIndex is always zero" "internal/output/sarif.go" ./internal/output "
 p='internal/output/sarif.go'; s=open(p).read()
 s=s.replace('\t\t\tRuleIndex: i,','\t\t\tRuleIndex: 0,')

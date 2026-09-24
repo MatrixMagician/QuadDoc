@@ -1,0 +1,37 @@
+[Unit]
+Description=app (from compose service app)
+After=cache.service
+Requires=cache.service
+After=db.service
+Wants=db.service
+
+[Container]
+ContainerName=my-app
+Image=docker.io/library/alpine:3.20
+Pull=always
+Environment=EXPLICIT_EMPTY=""
+Tmpfs=/run:size=67108864,mode=1777
+Volume=data.volume:/data:nocopy
+Volume=/srv/cfg:/cfg:rshared
+Network=coverage-default.network:alias=app
+DNSSearch=example.internal
+AddHost=db.internal:10.0.0.5
+RunInit=true
+UserNS=keep-id
+Ulimit=nofile=65536
+Ulimit=nproc=1024:2048
+Memory=536870912
+PidsLimit=100
+LogDriver=journald
+LogOpt=tag="my app"
+Annotation=io.example=1
+PodmanArgs=--pid=host
+PodmanArgs=--ipc=host
+StopTimeout=90
+HealthCmd=none
+
+[Service]
+Restart=on-failure
+
+[Install]
+WantedBy=default.target

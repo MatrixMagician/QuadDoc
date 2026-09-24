@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/MatrixMagician/quaddoc/internal/parse/compose"
@@ -111,8 +112,9 @@ func (u *builder) keys(key string, values []string) {
 func (u *builder) String() string { return u.b.String() }
 
 // quote renders one word in systemd's command-line syntax, which Quadlet uses
-// to split Exec=, PodmanArgs=, and the values of Environment=, Label= and
-// Sysctl= (podman-systemd.unit(5)). Plain words stay bare, for readability.
+// to split Exec=, PodmanArgs=, and the values of Environment=, Label=,
+// Annotation=, LogOpt= and Sysctl= (podman-systemd.unit(5)). Plain words stay
+// bare, for readability.
 func quote(word string) string {
 	if word != "" && !strings.ContainsAny(word, " \t\r\n\"'\\") {
 		return word
@@ -130,8 +132,9 @@ func quoteAll(words []string) string {
 }
 
 // pair renders a `key=value` assignment with the value quoted, the form
-// Environment=, Label= and Sysctl= split on. Quoting the value alone, not the
-// whole pair, keeps the key readable to quaddoc's own unit parser too.
+// Environment=, Label=, Annotation=, LogOpt= and Sysctl= split on. Quoting the
+// value alone, not the whole pair, keeps the key readable to quaddoc's own unit
+// parser too.
 func pair(key, value string) string {
 	return key + "=" + quote(value)
 }
@@ -362,12 +365,23 @@ func generateContainer(p *compose.Project, s compose.Service, opts Options) (Uni
 				dep.Service, dep.Service)
 		}
 		u.key("After", target)
-		u.key("Requires", target)
+		if dep.Required {
+			u.key("Requires", target)
+		} else {
+			// compose's `required: false` starts this service even when the
+			// dependency fails, which is what Wants= means (systemd.unit(5)).
+			u.key("Wants", target)
+		}
 	}
 
 	u.sectionHeader("Container")
-	u.key("ContainerName", s.Name)
+	containerName := s.Name
+	if s.ContainerName != "" {
+		containerName = s.ContainerName
+	}
+	u.key("ContainerName", containerName)
 	u.key("Image", s.Image)
+	u.key("Pull", s.Pull)
 
 	switch {
 	case len(s.Entrypoint) == 1 && quote(s.Entrypoint[0]) == s.Entrypoint[0]:
@@ -398,6 +412,12 @@ func generateContainer(p *compose.Project, s compose.Service, opts Options) (Uni
 	}
 
 	for _, m := range s.Volumes {
+		if m.Type == "tmpfs" {
+			// Volume= with a bare target would make a persistent anonymous
+			// volume, not a tmpfs.
+			u.key("Tmpfs", renderTmpfs(m))
+			continue
+		}
 		value, note := renderMount(p, s, m)
 		if note != "" {
 			u.comment("")
@@ -412,7 +432,15 @@ func generateContainer(p *compose.Project, s compose.Service, opts Options) (Uni
 		}
 		switch mode := s.NetworkMode; {
 		case mode == "":
+			if containerName != s.Name {
+				u.comment("")
+				u.comment("compose also resolves this container by its service name, %s, "+
+					"so each network gives it that alias.", s.Name)
+			}
 			for _, sn := range s.Networks {
+				if containerName != s.Name {
+					sn.Aliases = append([]string{s.Name}, sn.Aliases...)
+				}
 				u.key("Network", networkRef(p, sn))
 			}
 		case strings.HasPrefix(mode, "service:"):
@@ -440,8 +468,34 @@ func generateContainer(p *compose.Project, s compose.Service, opts Options) (Uni
 	u.keys("DropCapability", s.CapDrop)
 	u.keys("AddDevice", s.Devices)
 	u.keys("DNS", s.DNS)
+	u.keys("DNSSearch", s.DNSSearch)
+	u.keys("AddHost", s.ExtraHosts)
 	u.keys("GroupAdd", s.GroupAdd)
 	u.keys("Tmpfs", s.Tmpfs)
+	if s.Init != nil {
+		u.key("RunInit", strconv.FormatBool(*s.Init))
+	}
+	u.key("UserNS", s.UserNS)
+	u.keys("Ulimit", s.Ulimits)
+	u.key("Memory", s.Memory)
+	u.key("PidsLimit", s.PidsLimit)
+	u.key("LogDriver", s.LogDriver)
+	for _, k := range sortedKeys(s.LogOptions) {
+		// Quadlet splits LogOpt= on whitespace, as it does Environment=.
+		u.key("LogOpt", pair(k, s.LogOptions[k]))
+	}
+	for _, k := range sortedKeys(s.Annotations) {
+		u.key("Annotation", pair(k, s.Annotations[k]))
+	}
+	// Quadlet has no key for these namespaces. The host modes mean the same
+	// to podman run as to compose (podman-run(1), --pid and --ipc); the rest
+	// are reported by the compose loader.
+	if s.PID == "host" {
+		u.key("PodmanArgs", "--pid=host")
+	}
+	if s.IPC == "host" {
+		u.key("PodmanArgs", "--ipc=host")
+	}
 
 	if s.ReadOnly {
 		u.key("ReadOnly", "true")
@@ -458,6 +512,20 @@ func generateContainer(p *compose.Project, s compose.Service, opts Options) (Uni
 		})
 	}
 	u.key("StopSignal", s.StopSignal)
+	if s.StopTimeout != nil {
+		u.key("StopTimeout", strconv.Itoa(*s.StopTimeout))
+		// podman-systemd.unit(5): StopTimeout= "should be lower than the actual
+		// systemd unit timeout", and systemd's default TimeoutStopSec= is 90s.
+		if *s.StopTimeout >= 90 {
+			note := fmt.Sprintf("compose set `stop_grace_period` to %ds, which is not below "+
+				"systemd's default stop timeout of 90s, so systemd may kill the container "+
+				"before the grace period ends. Add TimeoutStopSec=%d or more to the [Service] "+
+				"section.", *s.StopTimeout, *s.StopTimeout+30)
+			u.comment("")
+			u.comment("%s", note)
+			notes = append(notes, Note{Unit: s.Name + ".container", Severity: "note", Message: note})
+		}
+	}
 	if s.ShmSize != "" {
 		u.key("ShmSize", s.ShmSize)
 	}
@@ -481,7 +549,7 @@ func generateContainer(p *compose.Project, s compose.Service, opts Options) (Uni
 		}
 	} else if hc != nil && hc.Disabled {
 		u.comment("")
-		u.comment("compose disabled the healthcheck with `healthcheck: disable: true`.")
+		u.comment("compose disabled the healthcheck, so the image's own HEALTHCHECK is disabled too.")
 		u.key("HealthCmd", "none")
 	}
 
@@ -534,6 +602,22 @@ func networkRef(p *compose.Project, sn compose.ServiceNetwork) string {
 	return ref
 }
 
+// renderTmpfs renders a long-syntax tmpfs mount as a `Tmpfs=` value, in the
+// CONTAINER-DIR[:OPTIONS] form podman's --tmpfs takes (podman-run(1)).
+func renderTmpfs(m compose.Mount) string {
+	var options []string
+	if m.ReadOnly {
+		options = append(options, "ro")
+	}
+	if m.TmpfsSize != 0 {
+		options = append(options, "size="+strconv.FormatInt(m.TmpfsSize, 10))
+	}
+	if m.TmpfsMode != 0 {
+		options = append(options, "mode="+strconv.FormatUint(uint64(m.TmpfsMode), 8))
+	}
+	return join("", m.Target, options)
+}
+
 // renderMount turns a compose mount into a `Volume=` value, and returns an
 // annotation when the translation was not obvious.
 func renderMount(p *compose.Project, s compose.Service, m compose.Mount) (string, string) {
@@ -559,12 +643,15 @@ func renderMount(p *compose.Project, s compose.Service, m compose.Mount) (string
 		if m.SELinux != "" {
 			options = append(options, m.SELinux)
 		}
+		if m.NoCopy {
+			options = append(options, "nocopy")
+		}
 		return join(source, m.Target, options), note
 
-	case "tmpfs":
-		return join("", m.Target, options), ""
-
 	default: // bind
+		if m.Propagation != "" {
+			options = append(options, m.Propagation)
+		}
 		if m.SELinux != "" {
 			options = append(options, m.SELinux)
 			return join(m.Source, m.Target, options), ""
@@ -625,8 +712,11 @@ func renderRestart(policy string) (string, string) {
 			"`systemctl stop` for as long as the machine stays up, and starts the unit " +
 			"again at boot because of the [Install] section."
 	default:
-		if strings.HasPrefix(policy, "on-failure") {
-			return "on-failure", ""
+		if retries, ok := strings.CutPrefix(policy, "on-failure:"); ok {
+			return "on-failure", fmt.Sprintf("compose used `restart: %s`, which gives up after %s "+
+				"retries. Restart=on-failure has no retry count: systemd limits restarts by "+
+				"rate instead, so set StartLimitBurst= and StartLimitIntervalSec= in [Unit] "+
+				"if the cap matters.", policy, retries)
 		}
 		return "always", fmt.Sprintf("compose restart policy %q was not recognised; "+
 			"Restart=always was used.", policy)
@@ -636,17 +726,16 @@ func renderRestart(policy string) (string, string) {
 // healthCommand renders a compose healthcheck test as a HealthCmd= value.
 //
 // compose's forms are `["CMD", "a", "b"]` for a direct exec, `["CMD-SHELL",
-// "..."]` for a shell command, and `["NONE"]` to disable. Podman runs a plain
-// --health-cmd string through a shell, so the exec form stays a JSON array:
-// otherwise its arguments are re-split, and an image without a shell cannot
-// run it at all (podman-run(1), --health-cmd).
+// "..."]` for a shell command, and `["NONE"]` to disable, which the compose
+// loader turns into HealthCheck.Disabled before this is reached. Podman runs a
+// plain --health-cmd string through a shell, so the exec form stays a JSON
+// array: otherwise its arguments are re-split, and an image without a shell
+// cannot run it at all (podman-run(1), --health-cmd).
 func healthCommand(test []string) string {
 	if len(test) == 0 {
 		return ""
 	}
 	switch test[0] {
-	case "NONE":
-		return ""
 	case "CMD":
 		return jsonArray(test)
 	case "CMD-SHELL":
