@@ -317,5 +317,18 @@ func (c *Config) ApplySuppressions(findings []rules.Finding, byUnit map[string][
 			})
 		}
 	}
+
+	// QD000 findings above are appended after an already-sorted slice, which
+	// would otherwise break the order output/json.go documents: unit, then
+	// line, then rule.
+	sort.SliceStable(kept, func(i, j int) bool {
+		if kept[i].Unit != kept[j].Unit {
+			return kept[i].Unit < kept[j].Unit
+		}
+		if kept[i].Line != kept[j].Line {
+			return kept[i].Line < kept[j].Line
+		}
+		return kept[i].RuleID < kept[j].RuleID
+	})
 	return kept
 }

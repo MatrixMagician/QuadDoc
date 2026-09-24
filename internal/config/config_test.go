@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -261,6 +262,31 @@ func TestApplySuppressionsRejectsMalformedDisable(t *testing.T) {
 	}
 	if !sawComplaint {
 		t.Error("a malformed disable directive should be reported through QD000")
+	}
+}
+
+func TestApplySuppressionsKeepsDocumentedOrder(t *testing.T) {
+	// output/json.go promises findings ordered by unit, then line, then
+	// rule. QD000 findings are appended after the already-sorted slice and
+	// must not break that order.
+	findings := []rules.Finding{
+		{RuleID: "QD001", Unit: "aaa.container", Line: 5, Severity: rules.Error},
+		{RuleID: "QD001", Unit: "zzz.container", Line: 1, Severity: rules.Error},
+	}
+	byUnit := map[string][]Suppression{
+		"aaa.container": {{Rules: []string{"QD001"}, Line: 1}}, // no reason -> QD000 at line 1
+	}
+	cfg := &Config{Disabled: map[string]bool{}, Severity: map[string]rules.Severity{}}
+
+	kept := cfg.ApplySuppressions(findings, byUnit)
+
+	var got []string
+	for _, f := range kept {
+		got = append(got, fmt.Sprintf("%s:%d:%s", f.Unit, f.Line, f.RuleID))
+	}
+	want := []string{"aaa.container:1:QD000", "aaa.container:5:QD001", "zzz.container:1:QD001"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("order = %v, want %v", got, want)
 	}
 }
 
