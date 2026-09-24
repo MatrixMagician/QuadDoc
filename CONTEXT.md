@@ -5,8 +5,8 @@ findings text, use the term as defined here rather than a synonym.
 
 ## Core terms
 
-**Unit** — a single Quadlet file (`.container`, `.volume`, `.network`, `.pod`)
-and its parsed contents. Not "service": a unit *generates* a systemd service, and
+**Unit** — a single Quadlet file (`.container`, `.volume`, `.network`, `.pod`,
+`.kube`, `.build`, `.image`, `.artifact`) and its parsed contents. Not "service": a unit *generates* a systemd service, and
 conflating the two loses the distinction QD022 depends on.
 
 **Project** — a set of units considered together, usually a directory. The
