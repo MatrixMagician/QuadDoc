@@ -358,8 +358,8 @@ func TestEveryRuleHonoursASeverityOverride(t *testing.T) {
 		SubGID:         []hostctx.IDRange{{Start: 100000, Count: 65536}},
 		PortStart:      1024,
 		PortStartKnown: true,
-		UnitNames:      []string{"web.container"},
-		UnitNamesKnown: true,
+		UnitPaths:      []string{"web.container"},
+		UnitPathsKnown: true,
 		IsRootless:     true,
 		RootlessKnown:  true,
 	}

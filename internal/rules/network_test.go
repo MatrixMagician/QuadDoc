@@ -178,8 +178,8 @@ func TestQD031SilentWhenRootful(t *testing.T) {
 
 func TestQD032(t *testing.T) {
 	host := hostctx.Static{
-		UnitNames:      []string{"web.container", "shared.network"},
-		UnitNamesKnown: true,
+		UnitPaths:      []string{"/etc/containers/systemd/users/web.container", "/etc/containers/systemd/users/shared.network"},
+		UnitPathsKnown: true,
 	}
 
 	tests := []struct {
@@ -209,7 +209,7 @@ func TestQD032MentionsTheSystemdPrefix(t *testing.T) {
 	// Quadlet names the objects it creates `systemd-<name>`, so a rename
 	// changes the object name too. A user who does not know that will be
 	// surprised twice.
-	host := hostctx.Static{UnitNames: []string{"web.container"}, UnitNamesKnown: true}
+	host := hostctx.Static{UnitPaths: []string{"/etc/containers/systemd/users/web.container"}, UnitPathsKnown: true}
 	u := unitFromText(t, "web.container", "[Container]\nImage=nginx\n")
 
 	got := runRule(t, "QD032", host, u)

@@ -149,7 +149,12 @@ open(p,'w').write(s)"
 
 run_mutation "capture copies unit file contents" "internal/hostctx/live.go" ./internal/hostctx "
 p='internal/hostctx/live.go'; s=open(p).read()
-s=s.replace('os.WriteFile(filepath.Join(unitDir, name), nil, 0o644)','os.WriteFile(filepath.Join(unitDir, name), []byte(\"[Container]\\nEnvironment=SECRET=hunter2\\n\"), 0o644)')
+s=s.replace('\t\t\tb.WriteString(p + \"\\\\n\")','\t\t\tdata, _ := os.ReadFile(p)\n\t\t\tb.WriteString(p + \"\\\\n\" + string(data))')
+open(p,'w').write(s)"
+
+run_mutation "replay ignores the recorded unit paths" "internal/hostctx/live.go" ./internal/hostctx "
+p='internal/hostctx/live.go'; s=open(p).read()
+s=s.replace('if data, err := os.ReadFile(filepath.Join(l.Root, unitsFile)); err == nil {','if data, err := os.ReadFile(filepath.Join(l.Root, unitsFile)); err == nil && l.Root == \"\" {')
 open(p,'w').write(s)"
 
 run_mutation "suppressions no longer require a reason" "internal/config/config.go" ./internal/config "

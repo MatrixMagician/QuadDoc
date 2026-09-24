@@ -35,7 +35,7 @@ type Live struct {
 		portStart   int
 		portKnown   bool
 		portRead    bool
-		unitNames   []string
+		unitPaths   []string
 		unitsKnown  bool
 		unitsRead   bool
 		rootless    bool
@@ -290,14 +290,33 @@ func (l *Live) quadletSearchPath() []string {
 		"/etc/containers/systemd/users")
 }
 
-// ExistingUnitNames lists units already installed in the Quadlet search path.
-func (l *Live) ExistingUnitNames() ([]string, bool) {
+// unitsFile is where a capture records the installed units' paths.
+const unitsFile = "quaddoc-units"
+
+// ExistingUnitPaths lists units already installed in the Quadlet search path,
+// as paths on the host. A name installed in two directories appears twice,
+// since either copy collides with a new unit of that name.
+func (l *Live) ExistingUnitPaths() ([]string, bool) {
 	if l.cache.unitsRead {
-		return l.cache.unitNames, l.cache.unitsKnown
+		return l.cache.unitPaths, l.cache.unitsKnown
 	}
 	l.cache.unitsRead = true
 
-	seen := map[string]bool{}
+	if l.Root != "" {
+		if data, err := os.ReadFile(filepath.Join(l.Root, unitsFile)); err == nil {
+			for line := range strings.Lines(string(data)) {
+				if p := strings.TrimSuffix(line, "\n"); p != "" {
+					l.cache.unitPaths = append(l.cache.unitPaths, p)
+				}
+			}
+			l.cache.unitsKnown = true
+			return l.cache.unitPaths, true
+		}
+		// Captures made before quaddoc-units recorded empty files under
+		// the search path instead, which the scan below still finds as long
+		// as the replaying $HOME and UID match the capturing ones.
+	}
+
 	for _, dir := range l.quadletSearchPath() {
 		entries, err := os.ReadDir(l.path(dir))
 		if err != nil {
@@ -305,17 +324,16 @@ func (l *Live) ExistingUnitNames() ([]string, bool) {
 		}
 		l.cache.unitsKnown = true
 		for _, e := range entries {
-			if e.IsDir() || seen[e.Name()] {
+			if e.IsDir() {
 				continue
 			}
 			switch filepath.Ext(e.Name()) {
 			case ".container", ".volume", ".network", ".pod", ".kube", ".build", ".image":
-				seen[e.Name()] = true
-				l.cache.unitNames = append(l.cache.unitNames, e.Name())
+				l.cache.unitPaths = append(l.cache.unitPaths, filepath.Join(dir, e.Name()))
 			}
 		}
 	}
-	return l.cache.unitNames, l.cache.unitsKnown
+	return l.cache.unitPaths, l.cache.unitsKnown
 }
 
 // Rootless reports whether Podman would run rootless, which is simply whether
@@ -346,7 +364,8 @@ func (l *Live) Rootless() (bool, bool) {
 //
 // The files keep their original paths under the directory, so replay is the
 // same code reading the same layout, which is what keeps live and replay from
-// diverging.
+// diverging. The two facts that depend on who is asking, the rootless status
+// and the installed units, go in quaddoc-* files at the top instead.
 func Capture(dir string) error {
 	live := NewLive()
 
@@ -374,23 +393,18 @@ func Capture(dir string) error {
 		return err
 	}
 
-	// Unit names, recorded as empty files so replay's directory listing works
-	// unchanged. The contents are not read, and copying them would leak
-	// whatever secrets the units contain.
-	//
-	// They go under the first search-path directory, resolved the same way
-	// the live reader resolves it, so that replay finds them without any
-	// special case.
-	names, known := live.ExistingUnitNames()
-	if known {
-		unitDir := filepath.Join(dir, live.quadletSearchPath()[0])
-		if err := os.MkdirAll(unitDir, 0o755); err != nil {
-			return fmt.Errorf("creating %s: %w", unitDir, err)
+	// Unit paths, one per line in a file of their own. The contents are not
+	// read, and copying them would leak whatever secrets the units contain.
+	// The search path embeds $HOME and the UID, so the paths are recorded as
+	// found rather than laid out for replay to re-derive in its own
+	// environment.
+	if paths, known := live.ExistingUnitPaths(); known {
+		var b strings.Builder
+		for _, p := range paths {
+			b.WriteString(p + "\n")
 		}
-		for _, name := range names {
-			if err := os.WriteFile(filepath.Join(unitDir, name), nil, 0o644); err != nil {
-				return fmt.Errorf("recording unit name %s: %w", name, err)
-			}
+		if err := os.WriteFile(filepath.Join(dir, unitsFile), []byte(b.String()), 0o644); err != nil {
+			return fmt.Errorf("recording installed units: %w", err)
 		}
 	}
 
@@ -482,7 +496,7 @@ func Describe(c Context) []string {
 		lines = append(lines, "Unprivileged ports: unknown")
 	}
 
-	if names, known := c.ExistingUnitNames(); known {
+	if names, known := c.ExistingUnitPaths(); known {
 		lines = append(lines, fmt.Sprintf("Installed Quadlet units: %d", len(names)))
 	} else {
 		lines = append(lines, "Installed Quadlet units: unknown")

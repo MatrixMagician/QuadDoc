@@ -2,6 +2,7 @@ package rules
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/MatrixMagician/quaddoc/internal/ir"
@@ -223,14 +224,14 @@ func checkQD031(c *Context) []Finding {
 }
 
 func checkQD032(c *Context) []Finding {
-	existing, known := c.Host.ExistingUnitNames()
+	existing, known := c.Host.ExistingUnitPaths()
 	if !known {
 		return nil
 	}
 
 	taken := make(map[string]bool, len(existing))
-	for _, name := range existing {
-		taken[name] = true
+	for _, p := range existing {
+		taken[filepath.Base(p)] = true
 	}
 
 	var findings []Finding
