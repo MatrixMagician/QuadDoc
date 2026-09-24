@@ -1,0 +1,5 @@
+[Network]
+NetworkName=coverage_default
+
+[Install]
+WantedBy=default.target

@@ -9,11 +9,13 @@ package compose
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/compose-spec/compose-go/v2/loader"
 	"github.com/compose-spec/compose-go/v2/types"
@@ -68,6 +70,31 @@ type Service struct {
 	StopSignal  string
 	Sysctls     map[string]string
 	Tmpfs       []string
+	// ContainerName is compose's `container_name`, empty when unset.
+	ContainerName string
+	// ExtraHosts are `host:ip` mappings, sorted by host.
+	ExtraHosts []string
+	// Init is compose's `init`, nil when unset.
+	Init   *bool
+	UserNS string
+	// StopTimeout is `stop_grace_period` in whole seconds, rounded up; nil
+	// when unset.
+	StopTimeout *int
+	DNSSearch   []string
+	// Ulimits are `name=soft[:hard]` values, sorted by name.
+	Ulimits []string
+	// Memory is `mem_limit` in bytes, empty when unset.
+	Memory string
+	// Pull is the Podman pull policy compose's `pull_policy` maps to, empty
+	// when unset or when it has no Podman equivalent.
+	Pull        string
+	LogDriver   string
+	LogOptions  map[string]string
+	Annotations map[string]string
+	PidsLimit   string
+	// PID and IPC are compose's `pid` and `ipc` namespace modes.
+	PID string
+	IPC string
 }
 
 // EnvVar is one environment assignment.
@@ -87,6 +114,14 @@ type Mount struct {
 	ReadOnly bool
 	// SELinux carries a `z` or `Z` if the compose file already set one.
 	SELinux string
+	// Propagation is a bind's `propagation`, e.g. `rshared`.
+	Propagation string
+	// NoCopy is a volume's `nocopy`.
+	NoCopy bool
+	// TmpfsSize and TmpfsMode are a tmpfs mount's `size` in bytes and `mode`,
+	// zero when unset.
+	TmpfsSize int64
+	TmpfsMode uint32
 }
 
 // ServiceNetwork is one entry of a service's `networks:`, naming a declared
@@ -112,6 +147,8 @@ type Dependency struct {
 	// Condition is `service_started`, `service_healthy`, or
 	// `service_completed_successfully`.
 	Condition string
+	// Required is false when compose may start the service without it.
+	Required bool
 }
 
 // HealthCheck is a compose healthcheck.
@@ -212,7 +249,8 @@ func normalise(cfg *types.Project, name, workingDir string) *Project {
 	// so the loader files it under DisabledServices. Converting it silently
 	// would be wrong, but so would ignoring it: the user would get a unit
 	// directory quietly missing a service. Report it and move on.
-	for _, svc := range cfg.DisabledServices {
+	for _, svcName := range sortedKeys(cfg.DisabledServices) {
+		svc := cfg.DisabledServices[svcName]
 		p.Unsupported = append(p.Unsupported, unsupportedFor(svc)...)
 		p.Unsupported = append(p.Unsupported, Unsupported{
 			Service: svc.Name,
@@ -224,7 +262,8 @@ func normalise(cfg *types.Project, name, workingDir string) *Project {
 		})
 	}
 
-	for _, svc := range cfg.Services {
+	for _, svcName := range sortedKeys(cfg.Services) {
+		svc := cfg.Services[svcName]
 		s := Service{
 			Name:       svc.Name,
 			Image:      svc.Image,
@@ -243,21 +282,65 @@ func normalise(cfg *types.Project, name, workingDir string) *Project {
 			StopSignal: svc.StopSignal,
 			Labels:     svc.Labels,
 			Sysctls:    svc.Sysctls,
+
+			ContainerName: svc.ContainerName,
+			Init:          svc.Init,
+			UserNS:        svc.UserNSMode,
+			DNSSearch:     svc.DNSSearch,
+			Pull:          pullPolicy(svc.PullPolicy),
+			Annotations:   svc.Annotations,
+			PID:           svc.Pid,
+			IPC:           svc.Ipc,
+		}
+
+		for _, host := range sortedKeys(svc.ExtraHosts) {
+			for _, ip := range svc.ExtraHosts[host] {
+				s.ExtraHosts = append(s.ExtraHosts, host+":"+ip)
+			}
+		}
+		if svc.StopGracePeriod != nil {
+			seconds := int(math.Ceil(time.Duration(*svc.StopGracePeriod).Seconds()))
+			s.StopTimeout = &seconds
+		}
+		for _, name := range sortedKeys(svc.Ulimits) {
+			l := svc.Ulimits[name]
+			if l.Single != 0 {
+				s.Ulimits = append(s.Ulimits, fmt.Sprintf("%s=%d", name, l.Single))
+			} else {
+				s.Ulimits = append(s.Ulimits, fmt.Sprintf("%s=%d:%d", name, l.Soft, l.Hard))
+			}
+		}
+		if svc.MemLimit != 0 {
+			s.Memory = strconv.FormatInt(int64(svc.MemLimit), 10)
+		}
+		if svc.PidsLimit != 0 {
+			s.PidsLimit = strconv.FormatInt(svc.PidsLimit, 10)
+		}
+		if svc.Logging != nil {
+			s.LogDriver = svc.Logging.Driver
+			s.LogOptions = svc.Logging.Options
 		}
 
 		for _, k := range sortedKeys(svc.Environment) {
-			v := svc.Environment[k]
-			ev := EnvVar{Name: k}
-			if v != nil {
-				ev.Value = *v
+			// A nil value is a bare `- VAR` that the environment did not
+			// resolve; compose leaves it unset, and unsupportedFor reports it.
+			if v := svc.Environment[k]; v != nil {
+				s.Environment = append(s.Environment, EnvVar{Name: k, Value: *v})
 			}
-			s.Environment = append(s.Environment, ev)
 		}
 
 		for _, v := range svc.Volumes {
 			m := Mount{Type: string(v.Type), Source: v.Source, Target: v.Target, ReadOnly: v.ReadOnly}
 			if v.Bind != nil {
 				m.SELinux = v.Bind.SELinux
+				m.Propagation = v.Bind.Propagation
+			}
+			if v.Volume != nil {
+				m.NoCopy = v.Volume.NoCopy
+			}
+			if v.Tmpfs != nil {
+				m.TmpfsSize = int64(v.Tmpfs.Size)
+				m.TmpfsMode = v.Tmpfs.Mode
 			}
 			s.Volumes = append(s.Volumes, m)
 		}
@@ -286,13 +369,16 @@ func normalise(cfg *types.Project, name, workingDir string) *Project {
 			s.DependsOn = append(s.DependsOn, Dependency{
 				Service:   dep,
 				Condition: svc.DependsOn[dep].Condition,
+				Required:  svc.DependsOn[dep].Required,
 			})
 		}
 
 		if hc := svc.HealthCheck; hc != nil {
 			s.HealthCheck = &HealthCheck{
-				Test:     hc.Test,
-				Disabled: hc.Disable,
+				Test: hc.Test,
+				// `test: ["NONE"]` disables the image's healthcheck just as
+				// `disable: true` does.
+				Disabled: hc.Disable || (len(hc.Test) > 0 && hc.Test[0] == "NONE"),
 			}
 			if hc.Interval != nil {
 				s.HealthCheck.Interval = hc.Interval.String()
@@ -362,7 +448,6 @@ func normalise(cfg *types.Project, name, workingDir string) *Project {
 		p.Networks = append(p.Networks, network)
 	}
 
-	sort.Slice(p.Services, func(i, j int) bool { return p.Services[i].Name < p.Services[j].Name })
 	return p
 }
 
@@ -418,7 +503,62 @@ func unsupportedFor(svc types.ServiceConfig) []Unsupported {
 		add("network_mode", "This network mode has no direct Quadlet equivalent; check "+
 			"the generated Network= value.")
 	}
+	for _, k := range sortedKeys(svc.Environment) {
+		if svc.Environment[k] == nil {
+			add("environment", fmt.Sprintf("%s has no value and was not set in the environment "+
+				"quaddoc ran in, so compose would leave it unset. No Environment= line was "+
+				"written; add Environment=%s=VALUE or an EnvironmentFile= if the container "+
+				"needs it.", k, k))
+		}
+	}
+	// Only the host namespaces go through PodmanArgs=: the other modes name
+	// compose services or containers, which Podman knows by other names.
+	if svc.Pid != "" && svc.Pid != "host" {
+		add("pid", fmt.Sprintf("Quadlet has no key for the PID namespace, and `pid: %s` has "+
+			"no exact Podman equivalent here. Add PodmanArgs=--pid=... by hand, naming the "+
+			"container as Podman knows it (podman-run(1), --pid).", svc.Pid))
+	}
+	if svc.Ipc != "" && svc.Ipc != "host" {
+		add("ipc", fmt.Sprintf("Quadlet has no key for the IPC namespace, and `ipc: %s` has "+
+			"no exact Podman equivalent here. Add PodmanArgs=--ipc=... by hand if the "+
+			"container needs it (podman-run(1), --ipc).", svc.Ipc))
+	}
+	if len(svc.SecurityOpt) > 0 {
+		add("security_opt", fmt.Sprintf("%s was not translated. Quadlet has dedicated keys "+
+			"for the common options: label=disable is SecurityLabelDisable=true, "+
+			"no-new-privileges is NoNewPrivileges=true, seccomp=PROFILE is "+
+			"SeccompProfile=PROFILE, apparmor=PROFILE is AppArmor=PROFILE "+
+			"(podman-systemd.unit(5)). Add the ones you need.", strings.Join(svc.SecurityOpt, ", ")))
+	}
+	if svc.CgroupParent != "" {
+		add("cgroup_parent", fmt.Sprintf("systemd owns the cgroup of a Quadlet container. To "+
+			"place it under %s, set Slice= in the [Service] section instead.", svc.CgroupParent))
+	}
+	if svc.PullPolicy != "" && pullPolicy(svc.PullPolicy) == "" {
+		add("pull_policy", fmt.Sprintf("`pull_policy: %s` has no Podman equivalent; Podman "+
+			"pulls always, missing, never, or newer (podman-run(1), --pull). Set Pull= to "+
+			"the closest, or refresh the image with a timer running `podman pull`.", svc.PullPolicy))
+	}
+	if hc := svc.HealthCheck; hc != nil && hc.StartInterval != nil {
+		add("healthcheck.start_interval", "Podman has no interval that applies only during "+
+			"the start period: HealthInterval= applies throughout, and HealthStartupCmd= "+
+			"with HealthStartupInterval= runs a separate startup check "+
+			"(podman-systemd.unit(5)). Choose one of those if the faster polling at start-up "+
+			"matters.")
+	}
 	return out
+}
+
+// pullPolicy maps a compose pull_policy onto Podman's --pull, or returns ""
+// when Podman has no equivalent.
+func pullPolicy(policy string) string {
+	switch policy {
+	case "always", "never", "missing":
+		return policy
+	case "if_not_present":
+		return "missing"
+	}
+	return ""
 }
 
 func sortedKeys[V any](m map[string]V) []string {

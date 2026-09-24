@@ -1,0 +1,13 @@
+[Unit]
+Description=cache (from compose service cache)
+
+[Container]
+ContainerName=cache
+Image=docker.io/library/redis:7
+Network=coverage-default.network
+
+[Service]
+Restart=no
+
+[Install]
+WantedBy=default.target
