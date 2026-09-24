@@ -1,0 +1,16 @@
+[Unit]
+Description=shell (from compose service shell)
+
+[Container]
+ContainerName=shell
+Image=docker.io/library/alpine:3.20
+Entrypoint=/entrypoint.sh
+Exec=sh -c "echo one two; sleep inf"
+Network=quoting-net.network
+HealthCmd=test -f /tmp/ready || exit 1
+
+[Service]
+Restart=no
+
+[Install]
+WantedBy=default.target

@@ -13,6 +13,8 @@
 package generate
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -101,6 +103,44 @@ func (u *builder) keys(key string, values []string) {
 }
 
 func (u *builder) String() string { return u.b.String() }
+
+// quote renders one word in systemd's command-line syntax, which Quadlet uses
+// to split Exec=, PodmanArgs=, and the values of Environment=, Label= and
+// Sysctl= (podman-systemd.unit(5)). Plain words stay bare, for readability.
+func quote(word string) string {
+	if word != "" && !strings.ContainsAny(word, " \t\r\n\"'\\") {
+		return word
+	}
+	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`, "\r", `\r`).Replace(word) + `"`
+}
+
+// quoteAll quotes each word and joins them into one command line.
+func quoteAll(words []string) string {
+	quoted := make([]string, len(words))
+	for i, w := range words {
+		quoted[i] = quote(w)
+	}
+	return strings.Join(quoted, " ")
+}
+
+// pair renders a `key=value` assignment with the value quoted, the form
+// Environment=, Label= and Sysctl= split on. Quoting the value alone, not the
+// whole pair, keeps the key readable to quaddoc's own unit parser too.
+func pair(key, value string) string {
+	return key + "=" + quote(value)
+}
+
+// jsonArray renders words as a JSON array, the form Podman takes for a
+// multi-word --entrypoint and for an exec-form --health-cmd. Quadlet passes
+// both values through without splitting them.
+func jsonArray(words []string) string {
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	// `&&` reads better than `&&`, and Podman decodes either.
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(words) // a []string always encodes
+	return strings.TrimSuffix(b.String(), "\n")
+}
 
 // wrap breaks a comment into lines of at most width characters, so annotations
 // stay readable in a terminal.
@@ -262,11 +302,11 @@ func generateVolume(v compose.Volume, opts Options) Unit {
 		case "o":
 			u.key("Options", v.Options[k])
 		default:
-			u.key("PodmanArgs", fmt.Sprintf("--opt %s=%s", k, v.Options[k]))
+			u.key("PodmanArgs", "--opt "+quote(k+"="+v.Options[k]))
 		}
 	}
 	for _, k := range sortedKeys(v.Labels) {
-		u.key("Label", fmt.Sprintf("%s=%s", k, v.Labels[k]))
+		u.key("Label", pair(k, v.Labels[k]))
 	}
 
 	return Unit{Name: v.Name + ".volume", Content: u.String()}
@@ -317,12 +357,17 @@ func generateContainer(p *compose.Project, s compose.Service, networkUnit string
 	u.key("ContainerName", s.Name)
 	u.key("Image", s.Image)
 
-	if len(s.Entrypoint) > 0 {
-		u.key("Entrypoint", strings.Join(s.Entrypoint, " "))
+	switch {
+	case len(s.Entrypoint) == 1 && quote(s.Entrypoint[0]) == s.Entrypoint[0]:
+		u.key("Entrypoint", s.Entrypoint[0])
+	case len(s.Entrypoint) > 0:
+		// Quadlet hands Entrypoint= to --entrypoint unsplit, so anything
+		// beyond one plain word needs Podman's JSON form.
+		u.key("Entrypoint", jsonArray(s.Entrypoint))
 	}
 	if len(s.Command) > 0 {
 		// Quadlet's Exec= is the command, matching compose's `command:`.
-		u.key("Exec", strings.Join(s.Command, " "))
+		u.key("Exec", quoteAll(s.Command))
 	}
 
 	if s.User != "" {
@@ -337,7 +382,7 @@ func generateContainer(p *compose.Project, s compose.Service, networkUnit string
 	u.key("HostName", s.Hostname)
 
 	for _, env := range s.Environment {
-		u.key("Environment", fmt.Sprintf("%s=%s", env.Name, env.Value))
+		u.key("Environment", pair(env.Name, env.Value))
 	}
 
 	for _, m := range s.Volumes {
@@ -386,10 +431,10 @@ func generateContainer(p *compose.Project, s compose.Service, networkUnit string
 		u.key("ShmSize", s.ShmSize)
 	}
 	for _, k := range sortedKeys(s.Sysctls) {
-		u.key("Sysctl", fmt.Sprintf("%s=%s", k, s.Sysctls[k]))
+		u.key("Sysctl", pair(k, s.Sysctls[k]))
 	}
 	for _, k := range sortedKeys(s.Labels) {
-		u.key("Label", fmt.Sprintf("%s=%s", k, s.Labels[k]))
+		u.key("Label", pair(k, s.Labels[k]))
 	}
 
 	if hc := s.HealthCheck; hc != nil && !hc.Disabled {
@@ -526,10 +571,13 @@ func renderRestart(policy string) (string, string) {
 	}
 }
 
-// healthCommand renders a compose healthcheck test as a shell command.
+// healthCommand renders a compose healthcheck test as a HealthCmd= value.
 //
 // compose's forms are `["CMD", "a", "b"]` for a direct exec, `["CMD-SHELL",
-// "..."]` for a shell command, and `["NONE"]` to disable.
+// "..."]` for a shell command, and `["NONE"]` to disable. Podman runs a plain
+// --health-cmd string through a shell, so the exec form stays a JSON array:
+// otherwise its arguments are re-split, and an image without a shell cannot
+// run it at all (podman-run(1), --health-cmd).
 func healthCommand(test []string) string {
 	if len(test) == 0 {
 		return ""
@@ -538,7 +586,7 @@ func healthCommand(test []string) string {
 	case "NONE":
 		return ""
 	case "CMD":
-		return strings.Join(test[1:], " ")
+		return jsonArray(test)
 	case "CMD-SHELL":
 		return strings.Join(test[1:], " ")
 	default:
