@@ -11,6 +11,7 @@ import subprocess
 import sys
 
 MAN_PAGES = {
+    "podman-pull(1)": "podman-pull",
     "podman-run(1)": "podman-run",
     "podman-systemd.unit(5)": "podman-systemd.unit",
     "systemd.service(5)": "systemd.service",

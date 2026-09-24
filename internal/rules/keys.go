@@ -26,8 +26,8 @@ func init() {
 			"is generated from the installed manual page by internal/rules/genkeys; see " +
 			"docs/adr/0002-minimum-podman-version.md for why per-version deltas are not " +
 			"attempted in v1. The rejection is Podman's checkForUnknownKeys " +
-			"(pkg/systemd/quadlet/quadlet.go), which returns \"unsupported key '%s' in " +
-			"group '%s'\" for the whole unit in both 5.0.0 and 5.8.4, the ends of the " +
+			"(pkg/systemd/quadlet/quadlet.go), which returns `unsupported key '%s' in " +
+			"group '%s'` for the whole unit in both 5.0.0 and 5.8.4, the ends of the " +
 			"supported range; observed with quadlet -dryrun on 5.8.4. In 5.8.4 the same " +
 			"check also covers the [Quadlet] section any unit may carry, against " +
 			"supportedQuadletKeys (DefaultDependencies=); 5.0.0 has no [Quadlet] section. " +
