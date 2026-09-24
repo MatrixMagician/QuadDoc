@@ -58,9 +58,16 @@ func TestQD040(t *testing.T) {
 		},
 		{
 			// The generator itself warns on short names, observed on 5.8.4.
-			name:         "a short name with auto-update is an error",
+			name:         "a short name with auto-update is a warning, the documented default",
 			text:         "[Container]\nImage=nginx:1.27\nAutoUpdate=registry\n",
-			wantFindings: 1, wantSeverity: Error, wantContains: "no registry",
+			wantFindings: 1, wantSeverity: Warning, wantContains: "no registry",
+		},
+		{
+			// podman-pull(1): "If an image tag is not specified, podman pull
+			// defaults to the image with the latest tag".
+			name:         "an untagged image with auto-update floats on latest",
+			text:         "[Container]\nImage=docker.io/library/nginx\nAutoUpdate=registry\n",
+			wantFindings: 1, wantSeverity: Warning, wantContains: `floating tag "latest"`,
 		},
 		{
 			name:         "a digest with auto-update can never update",

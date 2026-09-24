@@ -202,7 +202,7 @@ Quadlet prefixes the objects it creates with `systemd-`, so a name collision is 
 
 Auto-update has to know which image to check, which it cannot do from a short name that depends on registry search order, nor from a digest that never changes. A floating tag such as latest is also worth flagging: it works, but combined with auto-update it means the running version is whatever the registry served most recently.
 
-*Source: podman-systemd.unit(5), AutoUpdate=: registry "Requires a fully-qualified image reference (e.g., quay.io/podman/stable:latest) to be used to create the container. This enforcement is necessary to know which image to actually check and pull." The Quadlet generator itself warns on short names (observed, Podman 5.8.4).*
+*Source: podman-systemd.unit(5), AutoUpdate=: registry "Requires a fully-qualified image reference (e.g., quay.io/podman/stable:latest) to be used to create the container. This enforcement is necessary to know which image to actually check and pull." The Quadlet generator itself warns on short names (observed, Podman 5.8.4). An untagged reference floats like latest: podman-pull(1), "If an image tag is not specified, podman pull defaults to the image with the latest tag".*
 
 ## QD041
 
