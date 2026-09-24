@@ -297,6 +297,39 @@ func TestFixHonoursConfigAndSuppressions(t *testing.T) {
 	}
 }
 
+// TestBareHostContextMeansLive is the regression test for --host-context being
+// a plain string flag: written bare it swallowed the next path, or failed with
+// "flag needs an argument" at the end of the line.
+func TestBareHostContextMeansLive(t *testing.T) {
+	bin := buildCLI(t)
+	units := writeUnits(t, map[string]string{
+		"web.container": "[Container]\nImage=docker.io/library/nginx:1.27\n" +
+			"Volume=/srv/site:/data\n[Install]\nWantedBy=default.target\n",
+	})
+
+	want, stderr, code := run(t, bin, "lint", "--json", "--host-context=live", units)
+	if stderr != "" || !strings.Contains(want, `"rule": "QD`) {
+		t.Fatalf("--host-context=live failed (exit %d)\nstdout: %s\nstderr: %s", code, want, stderr)
+	}
+
+	for _, args := range [][]string{
+		{"lint", "--json", "--host-context", units},
+		{"lint", "--json", units, "--host-context"},
+		{"fix", "--host-context", units},
+		{"doctor", "--host-context"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			stdout, stderr, got := run(t, bin, args...)
+			if args[0] == "lint" && (got != code || stdout != want) {
+				t.Errorf("exit = %d, want %d\nstdout:\n%s\nwant:\n%s\nstderr: %s", got, code, stdout, want, stderr)
+			}
+			if args[0] != "lint" && got != 0 {
+				t.Errorf("exit = %d, want 0\nstderr: %s", got, stderr)
+			}
+		})
+	}
+}
+
 func TestCaptureContextAndReplay(t *testing.T) {
 	// Capture on the broken machine, lint anywhere. The two must agree, or
 	// every context-dependent finding becomes untrustworthy.
