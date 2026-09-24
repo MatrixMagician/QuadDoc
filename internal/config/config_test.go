@@ -55,6 +55,21 @@ func TestParseRejectsUnknownSeverity(t *testing.T) {
 	}
 }
 
+func TestParseAllowsCommentOnTableHeader(t *testing.T) {
+	// "[rules]  # project overrides" is valid TOML: a trailing comment on a
+	// table header. The header check must strip it before testing for the
+	// closing bracket.
+	cfg := &Config{Disabled: map[string]bool{}, Severity: map[string]rules.Severity{}}
+
+	err := parse("[rules]  # project overrides\nQD001 = \"warning\"\n", cfg)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if got := cfg.Severity["QD001"]; got != rules.Warning {
+		t.Errorf("QD001 severity = %v, want Warning", got)
+	}
+}
+
 func TestParseRejectsKeysOutsideRulesTable(t *testing.T) {
 	cfg := &Config{Disabled: map[string]bool{}, Severity: map[string]rules.Severity{}}
 

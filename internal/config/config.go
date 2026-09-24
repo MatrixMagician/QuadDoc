@@ -101,9 +101,12 @@ func parse(text string, cfg *Config) error {
 			continue
 		}
 
-		if strings.HasPrefix(raw, "[") && strings.HasSuffix(raw, "]") {
-			section = strings.ToLower(strings.TrimSpace(raw[1 : len(raw)-1]))
-			continue
+		if strings.HasPrefix(raw, "[") {
+			header := strings.TrimSpace(stripComment(raw))
+			if strings.HasSuffix(header, "]") {
+				section = strings.ToLower(strings.TrimSpace(header[1 : len(header)-1]))
+				continue
+			}
 		}
 
 		key, value, ok := strings.Cut(raw, "=")
