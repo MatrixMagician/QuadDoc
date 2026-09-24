@@ -151,6 +151,48 @@ func TestConvertPodMode(t *testing.T) {
 	}
 }
 
+// TestConvertNotesNameTheirUnit is the regression test for issue #36: the
+// note printer dropped generate.Note's Unit field, so a warning like the
+// build: one gave no clue which service it was about. It also checks that a
+// service disabled by a profile gets exactly one profiles note, not a
+// duplicate that wrongly claims the unit was generated.
+func TestConvertNotesNameTheirUnit(t *testing.T) {
+	bin := buildCLI(t)
+	dir, compose := writeCompose(t, `
+services:
+  web:
+    image: docker.io/library/nginx:1.27
+    build: .
+  worker:
+    image: docker.io/library/busybox:1.36
+    profiles: ["batch"]
+    command: ["true"]
+`)
+	out := filepath.Join(dir, "units")
+
+	_, stderr, code := run(t, bin, "convert", compose, "--out", out)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1\nstderr: %s", code, stderr)
+	}
+
+	wantLines := []string{
+		`warning: worker.container: compose key "profiles" is not translated: service "worker" is only active under profile(s) batch, and systemd has no equivalent of a compose profile. No unit was generated. Convert with the profile enabled if you want one, or keep profile variants in separate directories.`,
+		`warning: web.container: compose key "build" is not translated: Quadlet builds images with a separate .build unit, which is outside this version's scope. Build the image yourself and reference it by name, or write the .build unit by hand.`,
+	}
+	for _, want := range wantLines {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("stderr missing line:\n%s\ngot stderr:\n%s", want, stderr)
+		}
+	}
+
+	if strings.Contains(stderr, "generated unconditionally") {
+		t.Errorf("worker's profiles note wrongly claims the unit was generated:\n%s", stderr)
+	}
+	if n := strings.Count(stderr, `"profiles" is not translated`); n != 1 {
+		t.Errorf("got %d profiles notes for a disabled service, want 1:\n%s", n, stderr)
+	}
+}
+
 func TestConvertRejectsAMissingFile(t *testing.T) {
 	bin := buildCLI(t)
 

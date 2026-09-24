@@ -259,9 +259,15 @@ services:
 	for _, n := range result.Notes {
 		if strings.Contains(n.Message, "build") {
 			sawBuild = true
+			if n.Unit != "app.container" {
+				t.Errorf("build note has Unit %q, want %q so the CLI can name the service", n.Unit, "app.container")
+			}
 		}
 		if strings.Contains(n.Message, "profiles") {
 			sawProfiles = true
+			if n.Unit != "app.container" {
+				t.Errorf("profiles note has Unit %q, want %q so the CLI can name the service", n.Unit, "app.container")
+			}
 		}
 	}
 	if !sawBuild {
