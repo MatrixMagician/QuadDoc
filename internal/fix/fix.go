@@ -233,7 +233,7 @@ func entry(section, key, value string) quadlet.Line {
 	}
 }
 
-// fixQD001 appends the SELinux relabelling option to a Volume= line.
+// fixQD001 appends the SELinux relabelling option to a Volume= or Mount= line.
 //
 // The option to use was decided by the rule, which had the project-wide sharing
 // map; the fix does not re-derive it. That is what keeps the fix from writing a
@@ -242,25 +242,39 @@ func fixQD001(lines []quadlet.Line, f rules.Finding) ([]quadlet.Line, bool) {
 	idx := slices.IndexFunc(lines, func(l quadlet.Line) bool {
 		return l.Kind == quadlet.LineEntry && l.Number == f.Line
 	})
-	// A continued Volume= is left alone: the option belongs at the end of the
+	// A continued entry is left alone: the option belongs at the end of the
 	// value, and rewriting a continuation is not worth the risk of splitting it.
-	if idx < 0 || len(lines[idx].Raw) != 1 || !strings.EqualFold(lines[idx].Key, "Volume") {
+	if idx < 0 || len(lines[idx].Raw) != 1 {
 		return lines, false
 	}
 	l := lines[idx]
-
-	// Idempotence: a line that already carries a label is left alone.
-	if hasLabelOption(l.Value) {
-		return lines, false
-	}
 
 	option := f.Fix["option"]
 	if option != "z" && option != "Z" {
 		return lines, false
 	}
 
+	// Idempotence: a line that already carries a label is left alone.
+	switch l.Key {
+	case "Volume":
+		if hasLabelOption(l.Value) {
+			return lines, false
+		}
+		l.Value = appendOption(l.Value, option)
+	case "Mount":
+		// relabel=private and relabel=shared are what podman-run(1) --mount
+		// documents; Podman 5.8.4 turns them into the :Z and :z a Volume=
+		// would carry, and Quadlet passes the value through unchanged.
+		m, ok := ir.ParseMountKey(l.Value, l.Number)
+		if !ok || m.HasSELinuxLabel() {
+			return lines, false
+		}
+		l.Value = strings.TrimSpace(l.Value) + "," + ir.MountKeySpelling[option]
+	default:
+		return lines, false
+	}
+
 	key, _, _ := strings.Cut(l.Raw[0], "=")
-	l.Value = appendOption(l.Value, option)
 	l.Raw = []string{key + "=" + l.Value}
 	lines[idx] = l
 	return lines, true
@@ -297,7 +311,7 @@ func fixQD022(lines []quadlet.Line) ([]quadlet.Line, bool) {
 	// Idempotence: if the section already has a key, there is nothing to do.
 	// A commented-out key is not a key.
 	for _, l := range lines {
-		if l.Kind == quadlet.LineEntry && strings.EqualFold(l.Section, "Install") {
+		if l.Kind == quadlet.LineEntry && l.Section == "Install" {
 			return lines, false
 		}
 	}
@@ -306,7 +320,7 @@ func fixQD022(lines []quadlet.Line) ([]quadlet.Line, bool) {
 
 	// Fill in an existing empty [Install], or add the whole section.
 	for i, l := range lines {
-		if l.Kind == quadlet.LineSection && strings.EqualFold(l.Section, "Install") {
+		if l.Kind == quadlet.LineSection && l.Section == "Install" {
 			return slices.Insert(lines, i+1, wantedBy), true
 		}
 	}
@@ -329,11 +343,11 @@ func fixQD030(lines []quadlet.Line, networkUnit string) ([]quadlet.Line, bool) {
 	// where a human would have put it and never inside a continued entry.
 	insertAt := -1
 	for i, l := range lines {
-		if !strings.EqualFold(l.Section, "Container") {
+		if l.Section != "Container" {
 			continue
 		}
 		// Idempotence: already wired in.
-		if l.Kind == quadlet.LineEntry && strings.EqualFold(l.Key, "Network") && l.Value == want {
+		if l.Kind == quadlet.LineEntry && l.Key == "Network" && l.Value == want {
 			return lines, false
 		}
 		if l.Kind == quadlet.LineSection || l.Kind == quadlet.LineEntry {
