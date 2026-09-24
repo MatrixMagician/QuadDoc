@@ -1,12 +1,14 @@
 package rules
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/MatrixMagician/quaddoc/internal/hostctx"
+	"github.com/MatrixMagician/quaddoc/internal/podmantest"
 )
 
 func TestQD030(t *testing.T) {
@@ -213,6 +215,59 @@ func TestQD031(t *testing.T) {
 			}
 		})
 	}
+}
+
+// qd031Suggestions runs QD031 over each PublishPort= value and returns the
+// PublishPort= line each remediation suggests.
+func qd031Suggestions(t *testing.T, values []string) []string {
+	t.Helper()
+	var out []string
+	for _, v := range values {
+		u := unitFromText(t, "web.container", "[Container]\nImage=nginx\nPublishPort="+v+"\n")
+		got := runRule(t, "QD031", hostctx.Unknown{}, u)
+		if len(got) != 1 {
+			t.Fatalf("PublishPort=%s: findings = %d, want 1", v, len(got))
+		}
+		_, rest, _ := strings.Cut(got[0].Remediation, "    PublishPort=")
+		line, _, _ := strings.Cut(rest, "\n")
+		out = append(out, "PublishPort="+line)
+	}
+	return out
+}
+
+var qd031Cases = []struct{ value, want string }{
+	{"80:80", "PublishPort=8080:80"},
+	{"80-81:8080-8081", "PublishPort=8080-8081:8080-8081"},
+	{"127.0.0.1:80:80/udp", "PublishPort=127.0.0.1:8080:80/udp"},
+	{"[::1]:443:443", "PublishPort=[::1]:8443:443"},
+}
+
+func TestQD031SuggestionKeepsRangeAddressAndProtocol(t *testing.T) {
+	var values []string
+	for _, c := range qd031Cases {
+		values = append(values, c.value)
+	}
+	for i, got := range qd031Suggestions(t, values) {
+		if got != qd031Cases[i].want {
+			t.Errorf("PublishPort=%s: suggestion = %q, want %q", qd031Cases[i].value, got, qd031Cases[i].want)
+		}
+	}
+}
+
+func TestQD031SuggestionIsAcceptedByTheGenerator(t *testing.T) {
+	generator := podmantest.Generator(t)
+	dir := t.TempDir()
+	var values []string
+	for _, c := range qd031Cases {
+		values = append(values, c.value)
+	}
+	for i, line := range qd031Suggestions(t, values) {
+		unit := fmt.Sprintf("[Container]\nImage=docker.io/library/nginx:1.27\n%s\n", line)
+		if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("web%d.container", i)), []byte(unit), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	podmantest.AssertAccepts(t, generator, dir)
 }
 
 func TestQD031SilentWhenRootful(t *testing.T) {

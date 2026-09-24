@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/MatrixMagician/quaddoc/internal/ir"
@@ -243,16 +244,44 @@ func checkQD031(c *Context) []Finding {
 					fmt.Sprintf("port %d is below the usual unprivileged threshold of %d, so a rootless container would not be able to bind it",
 						p.HostPort, threshold)),
 				Remediation: fmt.Sprintf("Publish a high port and redirect to it, which needs no privilege:\n\n"+
-					"    PublishPort=%d:%d\n\n"+
+					"    PublishPort=%s\n\n"+
 					"Or lower the threshold system-wide, which affects every unprivileged "+
 					"process:\n\n"+
 					"    echo 'net.ipv4.ip_unprivileged_port_start=%d' | sudo tee /etc/sysctl.d/50-unprivileged-ports.conf\n"+
 					"    sudo sysctl --system",
-					p.HostPort+8000, p.ContainerPort, p.HostPort),
+					shiftedPublish(p.Raw, 8000), p.HostPort),
 			})
 		}
 	}
 	return findings
+}
+
+// shiftedPublish returns a PublishPort= value with its host port, or host port
+// range, moved up by offset. The address, container port and protocol are kept
+// verbatim: dropping an address such as 127.0.0.1 would widen what the port is
+// exposed to, and dropping a range's upper bound would publish fewer ports.
+// raw must have a host port, so it contains at least one colon.
+func shiftedPublish(raw string, offset int) string {
+	spec, proto := raw, ""
+	if i := strings.LastIndex(raw, "/"); i >= 0 {
+		spec, proto = raw[:i], raw[i:]
+	}
+	// The host and container ports are the last two fields and contain no
+	// colon, so an IPv6 address before them stays intact.
+	i := strings.LastIndex(spec, ":")
+	head, container := spec[:i], spec[i:]
+	address, host := "", head
+	if j := strings.LastIndex(head, ":"); j >= 0 {
+		address, host = head[:j+1], head[j+1:]
+	}
+
+	bounds := strings.Split(host, "-")
+	for k, b := range bounds {
+		if n, err := strconv.Atoi(strings.TrimSpace(b)); err == nil {
+			bounds[k] = strconv.Itoa(n + offset)
+		}
+	}
+	return address + strings.Join(bounds, "-") + container + proto
 }
 
 func checkQD032(c *Context) []Finding {
