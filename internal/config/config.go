@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -169,6 +170,9 @@ type Suppression struct {
 	Line int
 	// Unit is the file it appeared in.
 	Unit string
+	// Malformed is true for `disable <rule-id>` with no "=": the rule list
+	// was typed where the reason belongs, so neither is trustworthy.
+	Malformed bool
 }
 
 // Covers reports whether a suppression applies to a finding.
@@ -185,6 +189,13 @@ func (s Suppression) Covers(ruleID string) bool {
 }
 
 const directivePrefix = "quaddoc:"
+
+// malformedDisable matches a rule ID typed right after "disable" with a
+// space instead of "=", e.g. "disable QD001 reason". Without this check the
+// whole remainder becomes the reason, Rules stays empty, and Covers treats
+// that as "every rule" — a one-character slip turning a targeted suppression
+// into a file-wide one.
+var malformedDisable = regexp.MustCompile(`(?i)^QD[0-9]+(\s|,|$)`)
 
 // ParseSuppressions finds inline directives in a unit file's text.
 //
@@ -222,6 +233,8 @@ func ParseSuppressions(unit, text string) []Suppression {
 				}
 			}
 			s.Reason = strings.TrimSpace(reason)
+		} else if malformedDisable.MatchString(body) {
+			s.Malformed = true
 		} else {
 			s.Reason = strings.TrimSpace(body)
 		}
@@ -282,17 +295,25 @@ func (c *Config) ApplySuppressions(findings []rules.Finding, byUnit map[string][
 			if s.Reason != "" {
 				continue
 			}
-			kept = append(kept, rules.Finding{
-				RuleID:     "QD000",
-				Severity:   severity,
-				SeverityJS: severity.String(),
-				Confidence: rules.Confirmed,
-				Unit:       unit,
-				Line:       s.Line,
-				Message:    "a quaddoc disable directive gives no reason, so it is ignored",
-				Remediation: "Say why the rule does not apply here, on the same line:\n\n" +
+			message := "a quaddoc disable directive gives no reason, so it is ignored"
+			remediation := "Say why the rule does not apply here, on the same line:\n\n" +
+				"    # quaddoc: disable=QD001 this path is on a filesystem we label at mount time\n\n" +
+				"The reason is what lets the next person judge whether it still holds."
+			if s.Malformed {
+				message = "a quaddoc disable directive is malformed, so it suppresses nothing"
+				remediation = "Use \"=\" before the rule list, not a space:\n\n" +
 					"    # quaddoc: disable=QD001 this path is on a filesystem we label at mount time\n\n" +
-					"The reason is what lets the next person judge whether it still holds.",
+					"Without it, the rule list is read as the reason and nothing is suppressed."
+			}
+			kept = append(kept, rules.Finding{
+				RuleID:      "QD000",
+				Severity:    severity,
+				SeverityJS:  severity.String(),
+				Confidence:  rules.Confirmed,
+				Unit:        unit,
+				Line:        s.Line,
+				Message:     message,
+				Remediation: remediation,
 			})
 		}
 	}

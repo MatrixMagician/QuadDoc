@@ -150,6 +150,11 @@ func TestParseSuppressions(t *testing.T) {
 			text:      "# just a comment about QD001\n[Container]\n",
 			wantCount: 0,
 		},
+		{
+			name:      "a space instead of = is malformed, not a whole-file suppression",
+			text:      "# quaddoc: disable QD001 reason\n[Container]\n",
+			wantRules: nil, wantReason: "", wantCount: 1,
+		},
 	}
 
 	for _, tt := range tests {
@@ -206,6 +211,56 @@ func TestApplySuppressionsNeedsAReason(t *testing.T) {
 	}
 	if !sawComplaint {
 		t.Error("an unreasoned suppression should itself be reported")
+	}
+}
+
+func TestParseSuppressionsMalformedDisableWithoutEquals(t *testing.T) {
+	// "disable QD001 reason" (a space where "=" belongs) must not read as a
+	// reasoned, rule-list-free suppression: that combination covers every
+	// rule. Checked directly rather than through the table above, which only
+	// asserts Reason when it expects a non-empty one.
+	got := ParseSuppressions("web.container", "# quaddoc: disable QD001 reason\n[Container]\n")
+	if len(got) != 1 {
+		t.Fatalf("suppressions = %d, want 1: %+v", len(got), got)
+	}
+	if len(got[0].Rules) != 0 {
+		t.Errorf("rules = %v, want none", got[0].Rules)
+	}
+	if got[0].Reason != "" {
+		t.Errorf("reason = %q, want empty so ApplySuppressions reports it as malformed", got[0].Reason)
+	}
+	if !got[0].Malformed {
+		t.Error("Malformed should be true")
+	}
+}
+
+func TestApplySuppressionsRejectsMalformedDisable(t *testing.T) {
+	// "disable QD001 reason" (a space instead of "=") must not become a
+	// whole-file suppression with the rule ID absorbed into the reason. It
+	// is reported through QD000, same as an unreasoned directive, and
+	// suppresses nothing.
+	findings := []rules.Finding{
+		{RuleID: "QD001", Unit: "web.container", Severity: rules.Error},
+	}
+	suppressions := ParseSuppressions("web.container", "# quaddoc: disable QD001 reason\n")
+	cfg := &Config{Disabled: map[string]bool{}, Severity: map[string]rules.Severity{}}
+
+	kept := cfg.ApplySuppressions(findings, map[string][]Suppression{"web.container": suppressions})
+
+	var sawOriginal, sawComplaint bool
+	for _, f := range kept {
+		switch f.RuleID {
+		case "QD001":
+			sawOriginal = true
+		case "QD000":
+			sawComplaint = true
+		}
+	}
+	if !sawOriginal {
+		t.Error("a malformed disable directive must not suppress QD001")
+	}
+	if !sawComplaint {
+		t.Error("a malformed disable directive should be reported through QD000")
 	}
 }
 
