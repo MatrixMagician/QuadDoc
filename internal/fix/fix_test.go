@@ -9,6 +9,7 @@ import (
 
 	"github.com/MatrixMagician/quaddoc/internal/hostctx"
 	"github.com/MatrixMagician/quaddoc/internal/ir"
+	"github.com/MatrixMagician/quaddoc/internal/parse/quadlet"
 	"github.com/MatrixMagician/quaddoc/internal/rules"
 )
 
@@ -422,7 +423,7 @@ func TestFixQD001GuardsAgainstDoubleLabelling(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			lines := []string{"[Container]", tt.line}
+			lines := parseLines(t, "[Container]", tt.line)
 			finding := rules.Finding{
 				RuleID: "QD001", Line: 2,
 				Fix: map[string]string{"option": tt.option},
@@ -430,10 +431,10 @@ func TestFixQD001GuardsAgainstDoubleLabelling(t *testing.T) {
 
 			got, changed := fixQD001(lines, finding)
 			if changed != tt.wantHit {
-				t.Fatalf("changed = %v, want %v (line became %q)", changed, tt.wantHit, got[1])
+				t.Fatalf("changed = %v, want %v (line became %q)", changed, tt.wantHit, got[1].Raw)
 			}
-			if !tt.wantHit && got[1] != tt.line {
-				t.Errorf("an untouched line was modified: %q -> %q", tt.line, got[1])
+			if !tt.wantHit && got[1].Raw[0] != tt.line {
+				t.Errorf("an untouched line was modified: %q -> %q", tt.line, got[1].Raw)
 			}
 		})
 	}
@@ -442,25 +443,25 @@ func TestFixQD001GuardsAgainstDoubleLabelling(t *testing.T) {
 // TestFixQD001IsIdempotentWhenCalledTwice applies the same finding twice
 // directly, which the end-to-end test cannot do because the rule stops firing.
 func TestFixQD001IsIdempotentWhenCalledTwice(t *testing.T) {
-	lines := []string{"[Container]", "Volume=/srv/site:/data"}
+	lines := parseLines(t, "[Container]", "Volume=/srv/site:/data")
 	finding := rules.Finding{RuleID: "QD001", Line: 2, Fix: map[string]string{"option": "Z"}}
 
 	once, _ := fixQD001(lines, finding)
-	first := once[1]
+	first := once[1].Raw[0]
 
 	twice, changed := fixQD001(once, finding)
 	if changed {
 		t.Error("the second application reported a change")
 	}
-	if twice[1] != first {
-		t.Errorf("applying twice differs from applying once: %q then %q", first, twice[1])
+	if twice[1].Raw[0] != first {
+		t.Errorf("applying twice differs from applying once: %q then %q", first, twice[1].Raw[0])
 	}
 }
 
 // TestFixQD022GuardsAgainstDuplicateInstall likewise exercises QD022's guard
 // directly, since the rule also stops firing after the first fix.
 func TestFixQD022GuardsAgainstDuplicateInstall(t *testing.T) {
-	withInstall := []string{"[Container]", "Image=nginx", "", "[Install]", "WantedBy=default.target"}
+	withInstall := parseLines(t, "[Container]", "Image=nginx", "", "[Install]", "WantedBy=default.target")
 
 	got, changed := fixQD022(withInstall)
 	if changed {
@@ -468,7 +469,7 @@ func TestFixQD022GuardsAgainstDuplicateInstall(t *testing.T) {
 	}
 
 	// An empty [Install] should gain the key rather than a second section.
-	empty := []string{"[Container]", "Image=nginx", "", "[Install]"}
+	empty := parseLines(t, "[Container]", "Image=nginx", "", "[Install]")
 	got, changed = fixQD022(empty)
 	if !changed {
 		t.Fatal("an empty [Install] should be filled in")
@@ -486,7 +487,7 @@ func TestFixQD022GuardsAgainstDuplicateInstall(t *testing.T) {
 
 // TestFixQD030GuardsAgainstDuplicateNetwork covers the third fixable rule.
 func TestFixQD030GuardsAgainstDuplicateNetwork(t *testing.T) {
-	lines := []string{"[Container]", "Image=nginx"}
+	lines := parseLines(t, "[Container]", "Image=nginx")
 
 	once, changed := fixQD030(lines, "shared")
 	if !changed {
@@ -505,11 +506,131 @@ func TestFixQD030GuardsAgainstDuplicateNetwork(t *testing.T) {
 	}
 }
 
-func countOccurrences(lines []string, want string) int {
+// TestFixQD030KeepsAContinuedEntryWhole guards issue #11: the Network= key
+// once landed between an Exec= line and its continuation, which Quadlet
+// rejects as a line that is not a key-value pair.
+func TestFixQD030KeepsAContinuedEntryWhole(t *testing.T) {
+	generator := podmantest.Generator(t)
+
+	dir, _ := writeUnits(t, map[string]string{
+		"a.container": "[Container]\nImage=docker.io/library/alpine:3.20\n" +
+			"Exec=/bin/sh -c \\\n  \"echo hello\"\n\n[Install]\nWantedBy=default.target\n",
+		"b.container": "[Container]\nImage=docker.io/library/alpine:3.20\n\n" +
+			"[Install]\nWantedBy=default.target\n",
+	})
+	fixOnce(t, dir, Options{})
+
+	want := "[Container]\nImage=docker.io/library/alpine:3.20\n" +
+		"Exec=/bin/sh -c \\\n  \"echo hello\"\nNetwork=shared.network\n\n" +
+		"[Install]\nWantedBy=default.target\n"
+	if got := snapshot(t, dir)["a.container"]; got != want {
+		t.Errorf("a.container after fixing:\n%s\nwant:\n%s", got, want)
+	}
+	podmantest.AssertAccepts(t, generator, dir)
+}
+
+// TestFixRefusesToOverwriteANetworkOutsideTheProject guards issue #11: fixing
+// a subset of a directory's units once replaced a hand-written shared.network
+// with the template and reported it as created.
+func TestFixRefusesToOverwriteANetworkOutsideTheProject(t *testing.T) {
+	dir, project := writeUnits(t, map[string]string{
+		"a.container": "[Container]\nImage=nginx\n[Install]\nWantedBy=default.target\n",
+		"b.container": "[Container]\nImage=postgres\n[Install]\nWantedBy=default.target\n",
+	})
+	existing := filepath.Join(dir, "shared.network")
+	handWritten := "[Network]\nSubnet=10.89.0.0/24\n"
+	if err := os.WriteFile(existing, []byte(handWritten), 0o644); err != nil {
+		t.Fatalf("writing: %v", err)
+	}
+
+	engine := &rules.Engine{Host: hostctx.Static{SELinuxMode: hostctx.SELinuxEnforcing}}
+	_, err := Apply(project, engine.Run(project), Options{})
+
+	want := existing + " already exists but is not among the units being fixed; " +
+		"include it in the paths given to quaddoc, or move it aside, and re-run"
+	if err == nil || err.Error() != want {
+		t.Errorf("Apply error = %v, want %q", err, want)
+	}
+	if got := snapshot(t, dir)["shared.network"]; got != handWritten {
+		t.Errorf("shared.network was changed:\n%s", got)
+	}
+}
+
+// TestWriteNeverTruncatesAFileItMeantToCreate covers the window between Apply
+// checking the disk and Write running.
+func TestWriteNeverTruncatesAFileItMeantToCreate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "shared.network")
+	if err := os.WriteFile(path, []byte("[Network]\n"), 0o644); err != nil {
+		t.Fatalf("writing: %v", err)
+	}
+
+	err := Write(&Result{Changes: []Change{{Path: path, After: "template\n", Created: true}}})
+	if err == nil {
+		t.Error("Write replaced a file it was only meant to create")
+	}
+	if got, _ := os.ReadFile(path); string(got) != "[Network]\n" {
+		t.Errorf("the existing file was changed to %q", got)
+	}
+}
+
+// TestFixQD022IgnoresACommentedKey guards issue #11: a commented-out WantedBy=
+// was counted as a key, so the fix declined and the finding vanished.
+func TestFixQD022IgnoresACommentedKey(t *testing.T) {
+	dir, _ := writeUnits(t, map[string]string{
+		"a.container": "[Container]\nImage=docker.io/library/alpine:3.20\n\n" +
+			"[Install]\n# WantedBy=default.target\n",
+	})
+	result := fixOnce(t, dir, Options{})
+
+	want := "[Container]\nImage=docker.io/library/alpine:3.20\n\n" +
+		"[Install]\nWantedBy=default.target\n# WantedBy=default.target\n"
+	if got := snapshot(t, dir)["a.container"]; got != want {
+		t.Errorf("a.container after fixing:\n%s\nwant:\n%s", got, want)
+	}
+	if len(result.Unfixed) != 0 {
+		t.Errorf("unfixed = %+v, want none", result.Unfixed)
+	}
+}
+
+// TestADeclinedFixIsReportedAsUnfixed guards issue #11: a fixer that declined
+// used to drop its finding, so the user saw "Nothing to fix." for a unit that
+// lint still flags. A continued Volume= is declined: the old fix labelled the
+// first physical line and wrote `Volume=\:Z`.
+func TestADeclinedFixIsReportedAsUnfixed(t *testing.T) {
+	original := "[Container]\nImage=docker.io/library/nginx:1.27\nVolume=\\\n  /srv/site:/data\n" +
+		"[Install]\nWantedBy=default.target\n"
+	dir, _ := writeUnits(t, map[string]string{"web.container": original})
+	result := fixOnce(t, dir, Options{})
+
+	if got := snapshot(t, dir)["web.container"]; got != original {
+		t.Errorf("a declined fix changed the file:\n%s", got)
+	}
+	var ids []string
+	for _, f := range result.Unfixed {
+		ids = append(ids, f.RuleID)
+	}
+	if strings.Join(ids, ",") != "QD001" {
+		t.Errorf("unfixed rules = %v, want [QD001]", ids)
+	}
+}
+
+// parseLines parses physical lines into the logical lines the fixers take.
+func parseLines(t *testing.T, physical ...string) []quadlet.Line {
+	t.Helper()
+	f, err := quadlet.Parse("test.container", strings.NewReader(strings.Join(physical, "\n")))
+	if err != nil {
+		t.Fatalf("parsing: %v", err)
+	}
+	return f.Lines
+}
+
+func countOccurrences(lines []quadlet.Line, want string) int {
 	n := 0
-	for _, line := range lines {
-		if strings.TrimSpace(line) == want {
-			n++
+	for _, l := range lines {
+		for _, raw := range l.Raw {
+			if strings.TrimSpace(raw) == want {
+				n++
+			}
 		}
 	}
 	return n
