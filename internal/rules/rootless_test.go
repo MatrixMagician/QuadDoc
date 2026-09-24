@@ -86,6 +86,17 @@ func TestQD012(t *testing.T) {
 			wantContains: "may populate it as root first",
 		},
 		{
+			// podman-run(1) --user takes user[:group]; the UID is before the colon.
+			name: "User=UID:GID is still a non-root container",
+			units: map[string]string{
+				"data.volume":     "[Volume]\n",
+				"app.container":   "[Container]\nImage=app\nUser=1000:1000\nVolume=data.volume:/data\n",
+				"admin.container": "[Container]\nImage=admin\nVolume=data.volume:/data\n",
+			},
+			wantFindings: 1,
+			wantContains: "may populate it as root first",
+		},
+		{
 			name: "two non-root containers with different UIDs cannot both own it",
 			units: map[string]string{
 				"data.volume": "[Volume]\n",
@@ -171,6 +182,16 @@ func TestQD010(t *testing.T) {
 			name:         "a non-root container writing to a bind mount",
 			text:         "[Container]\nImage=app\nUser=1000\nVolume=/srv/data:/data\n",
 			wantFindings: 1,
+		},
+		{
+			name:         "User=UID:GID names the UID before the colon",
+			text:         "[Container]\nImage=app\nUser=1000:1000\nVolume=/srv/data:/data\n",
+			wantFindings: 1,
+		},
+		{
+			name:         "User=0:GID is still root",
+			text:         "[Container]\nImage=app\nUser=0:1000\nVolume=/srv/data:/data\n",
+			wantFindings: 0,
 		},
 		{
 			name:         "keep-id aligns the users, so nothing to report",
@@ -338,6 +359,18 @@ func TestQD013(t *testing.T) {
 			wantFindings: 1,
 		},
 		{
+			name:         "a UID beyond the range in User=UID:GID",
+			text:         "[Container]\nImage=app\nUser=70000:1000\n",
+			host:         rootlessHost,
+			wantFindings: 1,
+		},
+		{
+			name:         "a GID beyond the range in User=UID:GID",
+			text:         "[Container]\nImage=app\nUser=1000:70000\n",
+			host:         rootlessHost,
+			wantFindings: 1,
+		},
+		{
 			name:         "without host context the rule stays silent",
 			text:         "[Container]\nImage=app\nUser=70000\n",
 			host:         hostctx.Unknown{},
@@ -377,6 +410,22 @@ func TestQD013IsConfirmedNotPossible(t *testing.T) {
 	}
 	if got[0].Confidence != Confirmed {
 		t.Errorf("confidence = %v, want Confirmed", got[0].Confidence)
+	}
+}
+
+func TestQD013NamesTheGroupPartOfUser(t *testing.T) {
+	u := unitFromText(t, "app.container", "[Container]\nImage=app\nUser=1000:70000\n")
+	got := runRule(t, "QD013", rootlessHost, u)
+
+	if len(got) != 1 {
+		t.Fatalf("findings = %d, want 1", len(got))
+	}
+	want := "User= sets ID 70000, beyond the 65536 subordinate IDs available to this user, so the container cannot start"
+	if got[0].Message != want || got[0].Line != 3 {
+		t.Errorf("got %q at line %d, want %q at line 3", got[0].Message, got[0].Line, want)
+	}
+	if !strings.Contains(got[0].Remediation, "/etc/subgid") {
+		t.Errorf("a GID needs the subgid allocation:\n%s", got[0].Remediation)
 	}
 }
 

@@ -85,13 +85,25 @@ func runsAsNonRoot(u *ir.Unit) (int, bool) {
 		// finding on most correctly configured units.
 		return 0, false
 	}
-	uid, err := strconv.Atoi(strings.TrimSpace(u.User))
+	id, _ := userIDs(u)
+	uid, err := strconv.Atoi(id)
 	if err != nil {
 		// A name rather than a number. It resolves inside the container, so
 		// we cannot tell what it maps to.
 		return 0, false
 	}
 	return uid, uid != 0
+}
+
+// userIDs splits User= into its user and group parts. The generator passes
+// User= to podman-run(1) --user, which takes user[:group], and appends Group=
+// after a colon when it is set, so Group= is the group part when present.
+func userIDs(u *ir.Unit) (user, group string) {
+	user, group, _ = strings.Cut(strings.TrimSpace(u.User), ":")
+	if g := strings.TrimSpace(u.Group); g != "" {
+		group = g
+	}
+	return user, group
 }
 
 func checkQD010(c *Context) []Finding {
@@ -306,13 +318,18 @@ func checkQD013(c *Context) []Finding {
 	}
 
 	for _, u := range c.Project.Units {
-		if uid, err := strconv.Atoi(strings.TrimSpace(u.User)); err == nil && haveUID {
+		user, group := userIDs(u)
+		if uid, err := strconv.Atoi(user); err == nil && haveUID {
 			if f, bad := outsideRange(c, u, "User", uid, subUID, "subuid"); bad {
 				findings = append(findings, f)
 			}
 		}
-		if gid, err := strconv.Atoi(strings.TrimSpace(u.Group)); err == nil && haveGID {
-			if f, bad := outsideRange(c, u, "Group", gid, subGID, "subgid"); bad {
+		groupKey := "Group"
+		if strings.TrimSpace(u.Group) == "" {
+			groupKey = "User"
+		}
+		if gid, err := strconv.Atoi(group); err == nil && haveGID {
+			if f, bad := outsideRange(c, u, groupKey, gid, subGID, "subgid"); bad {
 				findings = append(findings, f)
 			}
 		}
@@ -341,7 +358,7 @@ func outsideRange(c *Context, u *ir.Unit, key string, id int, ranges []hostctx.I
 		Confidence: Confirmed,
 		Unit:       u.Path,
 		Line:       u.KeyLine(key),
-		Message: fmt.Sprintf("%s=%d is beyond the %d subordinate IDs available to this user, so the container cannot start",
+		Message: fmt.Sprintf("%s= sets ID %d, beyond the %d subordinate IDs available to this user, so the container cannot start",
 			key, id, total),
 		Remediation: fmt.Sprintf("Either use an ID within the range, or extend the allocation in "+
 			"/etc/%s and re-run `podman system migrate`:\n\n"+
