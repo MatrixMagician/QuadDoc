@@ -256,6 +256,86 @@ func TestFixRuleFilter(t *testing.T) {
 	}
 }
 
+// TestFixHonoursConfigAndSuppressions is the regression test for fix building
+// its own engine: it ignored .quaddoc.toml and inline suppressions, so it
+// rewrote volumes that lint had been told to leave alone.
+func TestFixHonoursConfigAndSuppressions(t *testing.T) {
+	bin := buildCLI(t)
+	const unit = "[Container]\nImage=docker.io/library/nginx:1.27\nVolume=/srv/site:/data\n" +
+		"[Install]\nWantedBy=default.target\n"
+	const labelled = "[Container]\nImage=docker.io/library/nginx:1.27\nVolume=/srv/site:/data:Z\n" +
+		"[Install]\nWantedBy=default.target\n"
+	const inline = "# quaddoc: disable=QD001 labelled by fstab\n" + unit
+
+	for _, tc := range []struct {
+		name, unit, config, want string
+	}{
+		{"unconfigured", unit, "", labelled},
+		{"config off", unit, "[rules]\nQD001 = \"off\"\n", unit},
+		{"inline suppression", inline, "", inline},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := writeUnits(t, map[string]string{"web.container": tc.unit})
+			if tc.config != "" {
+				if err := os.WriteFile(filepath.Join(dir, ".quaddoc.toml"), []byte(tc.config), 0o644); err != nil {
+					t.Fatalf("writing config: %v", err)
+				}
+			}
+
+			_, stderr, code := run(t, bin, "fix", dir, "--write")
+			if code != 0 {
+				t.Fatalf("exit = %d\nstderr: %s", code, stderr)
+			}
+			got, _ := os.ReadFile(filepath.Join(dir, "web.container"))
+			if string(got) != tc.want {
+				t.Errorf("after fix:\n%s\nwant:\n%s", got, tc.want)
+			}
+			if tc.want != labelled && stderr != "" {
+				t.Errorf("a suppressed finding was reported as needing a decision:\n%s", stderr)
+			}
+		})
+	}
+}
+
+// TestBareHostContextMeansLive is the regression test for --host-context being
+// a plain string flag: written bare it swallowed the next path, or failed with
+// "flag needs an argument" at the end of the line.
+func TestBareHostContextMeansLive(t *testing.T) {
+	bin := buildCLI(t)
+	units := writeUnits(t, map[string]string{
+		"web.container": "[Container]\nImage=docker.io/library/nginx:1.27\n" +
+			"Volume=/srv/site:/data\n[Install]\nWantedBy=default.target\n",
+	})
+
+	want, stderr, code := run(t, bin, "lint", "--json", "--host-context=live", units)
+	if stderr != "" {
+		t.Fatalf("--host-context=live failed (exit %d)\nstderr: %s", code, stderr)
+	}
+	// Whatever this host is, consulting it changes the QD001 finding: confirmed
+	// or dropped where SELinux is enforcing or absent, hedged when not consulted.
+	// So matching the live output is proof the bare flag consulted the host.
+	if hedged, _, _ := run(t, bin, "lint", "--json", units); hedged == want {
+		t.Fatalf("live and unconsulted output are identical, so the test cannot tell them apart:\n%s", want)
+	}
+
+	for _, args := range [][]string{
+		{"lint", "--json", "--host-context", units},
+		{"lint", "--json", units, "--host-context"},
+		{"fix", "--host-context", units},
+		{"doctor", "--host-context"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			stdout, stderr, got := run(t, bin, args...)
+			if args[0] == "lint" && (got != code || stdout != want) {
+				t.Errorf("exit = %d, want %d\nstdout:\n%s\nwant:\n%s\nstderr: %s", got, code, stdout, want, stderr)
+			}
+			if args[0] != "lint" && got != 0 {
+				t.Errorf("exit = %d, want 0\nstderr: %s", got, stderr)
+			}
+		})
+	}
+}
+
 func TestCaptureContextAndReplay(t *testing.T) {
 	// Capture on the broken machine, lint anywhere. The two must agree, or
 	// every context-dependent finding becomes untrustworthy.

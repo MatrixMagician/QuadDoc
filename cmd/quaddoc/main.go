@@ -74,8 +74,8 @@ func runLint(args []string) int {
 	asSARIF := fs.Bool("sarif", false, "emit findings as SARIF 2.1.0, for CI and code review")
 	verbose := fs.Bool("explain", false, "include each rule's rationale and citation")
 	disable := fs.String("disable", "", "comma-separated rule IDs to skip")
-	hostContext := fs.String("host-context", "",
-		`consult the host: "live" for this system, or a directory captured by capture-context`)
+	var hostContext hostContextFlag
+	fs.Var(&hostContext, "host-context", hostContextUsage)
 
 	paths, err := parseArgs(fs, args)
 	if err != nil {
@@ -86,32 +86,11 @@ func runLint(args []string) int {
 		return 2
 	}
 
-	projectConfig, err := config.Load(paths[0])
+	_, findings, err := audit(paths, *disable, string(hostContext))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "quaddoc: %v\n", err)
 		return 2
 	}
-	ruleConfig := projectConfig.RuleConfig()
-	for _, id := range strings.Split(*disable, ",") {
-		if id = strings.ToUpper(strings.TrimSpace(id)); id != "" {
-			ruleConfig.Disabled[id] = true
-		}
-	}
-
-	project, err := loadProject(paths)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "quaddoc: %v\n", err)
-		return 2
-	}
-
-	host, err := resolveHostContext(*hostContext)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "quaddoc: %v\n", err)
-		return 2
-	}
-
-	engine := &rules.Engine{Config: ruleConfig, Host: host}
-	findings := projectConfig.ApplySuppressions(engine.Run(project), suppressions(project))
 
 	switch {
 	case *asSARIF:
@@ -288,6 +267,29 @@ func runRules(args []string) int {
 	return 0
 }
 
+const hostContextUsage = "consult the host: bare for this system, or =dir for a directory captured by capture-context"
+
+// hostContextFlag is --host-context. Written bare it means "live"; with =dir it
+// replays a capture. Reporting itself as a boolean flag is what lets it be
+// written bare: neither parseArgs nor the flag package then takes the next
+// argument as its value, which used to swallow the first path.
+type hostContextFlag string
+
+func (f *hostContextFlag) String() string { return string(*f) }
+
+func (f *hostContextFlag) Set(v string) error {
+	switch v {
+	case "true":
+		v = "live"
+	case "false":
+		v = ""
+	}
+	*f = hostContextFlag(v)
+	return nil
+}
+
+func (f *hostContextFlag) IsBoolFlag() bool { return true }
+
 // resolveHostContext turns the --host-context flag into a context.
 //
 // The default is to know nothing, so that findings are hedged unless the user
@@ -331,13 +333,14 @@ func runCapture(args []string) int {
 
 func runDoctor(args []string) int {
 	fs := flag.NewFlagSet("doctor", flag.ExitOnError)
-	hostContext := fs.String("host-context", "live", `"live" or a captured directory`)
+	hostContext := hostContextFlag("live")
+	fs.Var(&hostContext, "host-context", `this system by default, or =dir for a directory captured by capture-context`)
 
 	if _, err := parseArgs(fs, args); err != nil {
 		return 2
 	}
 
-	host, err := resolveHostContext(*hostContext)
+	host, err := resolveHostContext(string(hostContext))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "quaddoc: %v\n", err)
 		return 2
@@ -382,8 +385,8 @@ func runFix(args []string) int {
 	fs := flag.NewFlagSet("fix", flag.ExitOnError)
 	write := fs.Bool("write", false, "apply the changes instead of previewing them")
 	only := fs.String("rule", "", "comma-separated rule IDs to fix; default is every fixable rule")
-	hostContext := fs.String("host-context", "",
-		`consult the host: "live" for this system, or a directory captured by capture-context`)
+	var hostContext hostContextFlag
+	fs.Var(&hostContext, "host-context", hostContextUsage)
 
 	paths, err := parseArgs(fs, args)
 	if err != nil {
@@ -394,20 +397,11 @@ func runFix(args []string) int {
 		return 2
 	}
 
-	project, err := loadProject(paths)
+	project, findings, err := audit(paths, "", string(hostContext))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "quaddoc: %v\n", err)
 		return 2
 	}
-
-	host, err := resolveHostContext(*hostContext)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "quaddoc: %v\n", err)
-		return 2
-	}
-
-	engine := &rules.Engine{Host: host}
-	findings := engine.Run(project)
 
 	opts := fix.Options{Only: map[string]bool{}}
 	for _, id := range strings.Split(*only, ",") {
@@ -481,6 +475,35 @@ func reportUnfixed(unfixed []rules.Finding) {
 		fmt.Fprintf(os.Stderr, "  %s (%d)\n", summary, byRule[id])
 	}
 	fmt.Fprintln(os.Stderr, "\nRun `quaddoc lint` to see them in full.")
+}
+
+// audit loads the project and runs the rules over it exactly as lint reports
+// them: project configuration, then disabled rules, then inline suppressions.
+// fix shares it so that it never acts on a finding lint would not show.
+func audit(paths []string, disable, hostContext string) (*ir.Project, []rules.Finding, error) {
+	projectConfig, err := config.Load(paths[0])
+	if err != nil {
+		return nil, nil, err
+	}
+	ruleConfig := projectConfig.RuleConfig()
+	for _, id := range strings.Split(disable, ",") {
+		if id = strings.ToUpper(strings.TrimSpace(id)); id != "" {
+			ruleConfig.Disabled[id] = true
+		}
+	}
+
+	project, err := loadProject(paths)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	host, err := resolveHostContext(hostContext)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	engine := &rules.Engine{Config: ruleConfig, Host: host}
+	return project, projectConfig.ApplySuppressions(engine.Run(project), suppressions(project)), nil
 }
 
 // loadProject reads every named path into one project. Rules reason across the
