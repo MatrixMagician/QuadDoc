@@ -92,7 +92,7 @@ func TestParseMount(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := ParseMount(tt.value, 1)
-			tt.want.Line, tt.want.Raw = 1, tt.value
+			tt.want.Line, tt.want.Raw, tt.want.Key = 1, tt.value, "Volume"
 
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("ParseMount(%q) =\n  %+v\nwant\n  %+v", tt.value, got, tt.want)

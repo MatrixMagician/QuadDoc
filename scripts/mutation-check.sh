@@ -325,7 +325,17 @@ open(p,'w').write(s)"
 
 run_mutation "an empty Mount= also resets Volume=" "internal/ir/load.go" ./internal/ir "
 p='internal/ir/load.go'; s=open(p).read()
-s=s.replace('return m.Key() == e.Key })','return true })')
+s=s.replace('return m.Key == e.Key })','return true })')
+open(p,'w').write(s)"
+
+run_mutation "QD010 advises Volume= for a Mount= bind" "$P/rootless.go" ./$P "
+p='$P/rootless.go'; s=open(p).read()
+s=s.replace('uid, uid, m.Key, withOption','uid, uid, \"Volume\", withOption')
+open(p,'w').write(s)"
+
+run_mutation "a Mount= bind is recorded as Volume=" "internal/ir/load.go" ./internal/ir "
+p='internal/ir/load.go'; s=open(p).read()
+s=s.replace('Type: MountBind, Key: \"Mount\"}','Type: MountBind, Key: \"Volume\"}')
 open(p,'w').write(s)"
 
 run_mutation "ro=1 read as read-only" "internal/ir/load.go" ./internal/ir "

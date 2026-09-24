@@ -255,6 +255,21 @@ func TestQD010OffersBothRemedies(t *testing.T) {
 	}
 }
 
+// TestQD010SpellsTheMountKey guards issue #44: a Mount= bind was advised as
+// Volume=type=bind,...,U=true, which is neither key's syntax.
+func TestQD010SpellsTheMountKey(t *testing.T) {
+	u := unitFromText(t, "app.container",
+		"[Container]\nImage=app\nUser=1000\nMount=type=bind,source=/srv/data,destination=/data\n")
+	got := runRule(t, "QD010", rootlessHost, u)
+	if len(got) != 1 {
+		t.Fatalf("findings = %d, want 1", len(got))
+	}
+	want := "\n         Mount=type=bind,source=/srv/data,destination=/data,U=true\n"
+	if !strings.Contains(got[0].Remediation, want) {
+		t.Errorf("remediation =\n%s\nwant it to contain\n%s", got[0].Remediation, want)
+	}
+}
+
 func TestQD011(t *testing.T) {
 	tests := []struct {
 		name         string

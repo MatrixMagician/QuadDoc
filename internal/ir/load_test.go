@@ -534,13 +534,13 @@ func TestMountKeyBindEntriesAreModelled(t *testing.T) {
 			}
 			u := FromParsed(f)
 			for i := range tt.want {
-				tt.want[i].Line, tt.want[i].Raw = 3, tt.value
+				tt.want[i].Line, tt.want[i].Raw, tt.want[i].Key = 3, tt.value, "Mount"
 			}
 			if !reflect.DeepEqual(u.Mounts, tt.want) {
 				t.Errorf("mounts =\n  %+v\nwant\n  %+v", u.Mounts, tt.want)
 			}
-			if len(u.Mounts) == 1 && u.Mounts[0].Key() != "Mount" {
-				t.Errorf("key = %q, want Mount", u.Mounts[0].Key())
+			if len(u.Mounts) == 1 && u.Mounts[0].Key != "Mount" {
+				t.Errorf("key = %q, want Mount", u.Mounts[0].Key)
 			}
 		})
 	}
@@ -563,7 +563,7 @@ Volume=
 	}
 	var got []string
 	for _, m := range FromParsed(f).Mounts {
-		got = append(got, m.Key()+"="+m.Source)
+		got = append(got, m.Key+"="+m.Source)
 	}
 	if want := []string{"Mount=/m2"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("mounts = %v, want %v", got, want)
@@ -572,9 +572,40 @@ Volume=
 
 func TestVolumeMountsReportTheVolumeKey(t *testing.T) {
 	for _, value := range []string{"/srv:/data:Z", "/data", "pg.volume:/pg", "./rel:/d"} {
-		if got := ParseMount(value, 1).Key(); got != "Volume" {
-			t.Errorf("ParseMount(%q).Key() = %q, want Volume", value, got)
+		if got := ParseMount(value, 1).Key; got != "Volume" {
+			t.Errorf("ParseMount(%q).Key = %q, want Volume", value, got)
 		}
+	}
+}
+
+// TestMountRecordsTheKeyItWasLoadedFrom guards issue #44: the key was once
+// guessed by re-parsing Raw, so a Volume= value that also reads as a Mount=
+// bind was taken for one, and an empty Volume= then failed to reset it.
+func TestMountRecordsTheKeyItWasLoadedFrom(t *testing.T) {
+	f, err := quadlet.Parse("web.container", strings.NewReader(`[Container]
+Image=nginx
+Volume=type=bind,source=/s,destination=/d
+Mount=type=bind,source=/m,destination=/m
+`))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	var got []string
+	for _, m := range FromParsed(f).Mounts {
+		got = append(got, m.Key+"="+m.Raw)
+	}
+	want := []string{"Volume=type=bind,source=/s,destination=/d", "Mount=type=bind,source=/m,destination=/m"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("mounts = %v, want %v", got, want)
+	}
+
+	f, err = quadlet.Parse("web.container", strings.NewReader(
+		"[Container]\nImage=nginx\nVolume=type=bind,source=/s,destination=/d\nVolume=\n"))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if mounts := FromParsed(f).Mounts; len(mounts) != 0 {
+		t.Errorf("an empty Volume= left %+v", mounts)
 	}
 }
 
