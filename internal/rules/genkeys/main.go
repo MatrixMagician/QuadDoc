@@ -16,6 +16,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"go/format"
 	"os"
 	"os/exec"
 	"regexp"
@@ -23,8 +24,12 @@ import (
 	"strings"
 )
 
+// sectionPattern matches the unit headings ("Container units [Container]") and
+// the heading for the [Quadlet] section every unit may carry ("Quadlet section
+// [Quadlet]"). Missing the latter would file its keys under the section before
+// it on the page.
 var (
-	sectionPattern = regexp.MustCompile(`(?m)^(\w[\w ]*units \[(\w+)\])`)
+	sectionPattern = regexp.MustCompile(`(?m)^(\w[\w ]*(?:units|section) \[(\w+)\])`)
 	keyPattern     = regexp.MustCompile(`(?m)^   ([A-Z][A-Za-z0-9]*)=`)
 )
 
@@ -44,12 +49,16 @@ func main() {
 		os.Exit(1)
 	}
 
-	source := render(sections, podmanVersion())
+	source, err := format.Source([]byte(render(sections, podmanVersion())))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "genkeys: formatting output: %v\n", err)
+		os.Exit(1)
+	}
 	if *out == "" {
-		fmt.Print(source)
+		fmt.Print(string(source))
 		return
 	}
-	if err := os.WriteFile(*out, []byte(source), 0o644); err != nil {
+	if err := os.WriteFile(*out, source, 0o644); err != nil {
 		fmt.Fprintf(os.Stderr, "genkeys: writing %s: %v\n", *out, err)
 		os.Exit(1)
 	}

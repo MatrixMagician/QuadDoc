@@ -28,7 +28,10 @@ func init() {
 			"attempted in v1. The rejection is Podman's checkForUnknownKeys " +
 			"(pkg/systemd/quadlet/quadlet.go), which returns \"unsupported key '%s' in " +
 			"group '%s'\" for the whole unit in both 5.0.0 and 5.8.4, the ends of the " +
-			"supported range; observed with quadlet -dryrun on 5.8.4. The 5.8.4 source " +
+			"supported range; observed with quadlet -dryrun on 5.8.4. In 5.8.4 the same " +
+			"check also covers the [Quadlet] section any unit may carry, against " +
+			"supportedQuadletKeys (DefaultDependencies=); 5.0.0 has no [Quadlet] section. " +
+			"The 5.8.4 source " +
 			"also accepts ServiceName= in every unit section and LogOpt= in [Kube], and " +
 			"still honours the deprecated RemapUsers=, RemapUid=, RemapGid=, " +
 			"RemapUidSize= and VolatileTmp=, none of which the manual page lists for " +
@@ -118,17 +121,22 @@ func checkQD042(c *Context) []Finding {
 			continue
 		}
 
-		accepted, ok := knownKeys[section]
-		if !ok {
+		if _, ok := knownKeys[section]; !ok {
 			continue
 		}
 
 		for _, e := range u.Entries {
-			if e.Section != section || accepted[e.Key] || generatorOnlyKeys[section][e.Key] {
+			// The generator checks the unit's own section and the [Quadlet]
+			// section every unit may carry; it passes other sections to systemd.
+			if e.Section != section && e.Section != "Quadlet" {
+				continue
+			}
+			accepted := knownKeys[e.Section]
+			if accepted[e.Key] || generatorOnlyKeys[e.Section][e.Key] {
 				continue
 			}
 
-			if replacement, ok := deprecatedKeys[section][e.Key]; ok {
+			if replacement, ok := deprecatedKeys[e.Section][e.Key]; ok {
 				findings = append(findings, Finding{
 					Severity:   Note,
 					Confidence: Confirmed,
@@ -146,7 +154,7 @@ func checkQD042(c *Context) []Finding {
 
 			base := u.Name + "." + string(u.Kind)
 			message := fmt.Sprintf("%s= is not a Quadlet key for [%s], so the generator rejects %s and creates no service for it",
-				e.Key, section, base)
+				e.Key, e.Section, base)
 			remediation := fmt.Sprintf("The generator stops at the first key it does not know and "+
 				"generates nothing for this unit. Check the spelling against "+
 				"`man podman-systemd.unit`, or run `quaddoc rules QD042`.\n\n"+
@@ -163,7 +171,7 @@ func checkQD042(c *Context) []Finding {
 					remediation = suggestion + ".\n\n" + remediation
 				} else {
 					message = fmt.Sprintf("%s= is not a Quadlet key for [%s], so the generator rejects %s; did you mean %s=?",
-						e.Key, section, base, suggestion)
+						e.Key, e.Section, base, suggestion)
 					remediation = fmt.Sprintf("Rename the key:\n\n    %s=%s\n\n"+
 						"The generator rejects a unit with a key it does not know, so as "+
 						"written no service is created for it.", suggestion, e.Value)

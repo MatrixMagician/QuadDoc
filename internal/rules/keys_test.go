@@ -134,6 +134,26 @@ func TestQD042(t *testing.T) {
 			wantFindings: 1, wantSeverity: Error,
 		},
 		{
+			name:         "DefaultDependencies belongs in [Quadlet], not [Artifact]",
+			unit:         "blob.artifact",
+			text:         "[Artifact]\nArtifact=quay.io/example/blob:1\nDefaultDependencies=false\n",
+			wantFindings: 1, wantSeverity: Error,
+			wantContains: "DefaultDependencies= is not a Quadlet key for [Artifact]",
+		},
+		{
+			name:         "DefaultDependencies in [Quadlet] is accepted",
+			unit:         "blob.artifact",
+			text:         "[Artifact]\nArtifact=quay.io/example/blob:1\n\n[Quadlet]\nDefaultDependencies=false\n",
+			wantFindings: 0,
+		},
+		{
+			name:         "the [Quadlet] section is checked in every unit",
+			unit:         "web.container",
+			text:         "[Container]\nImage=nginx\n\n[Quadlet]\nFrobnicate=yes\n",
+			wantFindings: 1, wantSeverity: Error,
+			wantContains: "Frobnicate= is not a Quadlet key for [Quadlet], so the generator rejects web.container",
+		},
+		{
 			name:         "a container key in a volume unit is wrong",
 			unit:         "data.volume",
 			text:         "[Volume]\nVolumeName=data\nPublishPort=80:80\n",
@@ -209,25 +229,38 @@ func TestQD042NamesThePodmanItCheckedAgainst(t *testing.T) {
 func TestQD042MatchesTheGenerator(t *testing.T) {
 	generator := podmantest.Generator(t)
 
-	rejected := t.TempDir()
-	writeUnit(t, rejected, "web.container", "[Container]\nImage=docker.io/library/nginx:1.27\nFrobnicate=yes\n")
-	cmd := exec.Command(generator, "-dryrun", "-user")
-	cmd.Env = append(os.Environ(), "QUADLET_UNIT_DIRS="+rejected)
-	out, err := cmd.CombinedOutput()
-	if err == nil || !strings.Contains(string(out), "unsupported key 'Frobnicate' in group 'Container'") {
-		t.Errorf("expected the generator to reject the unknown key, got err=%v:\n%s", err, out)
+	for _, r := range []struct{ name, text, want string }{
+		{"web.container", "[Container]\nImage=docker.io/library/nginx:1.27\nFrobnicate=yes\n",
+			"unsupported key 'Frobnicate' in group 'Container'"},
+		{"blob.artifact", "[Artifact]\nArtifact=quay.io/example/blob:1\nDefaultDependencies=false\n",
+			"unsupported key 'DefaultDependencies' in group 'Artifact'"},
+		{"app.container", "[Container]\nImage=docker.io/library/nginx:1.27\n\n[Quadlet]\nFrobnicate=yes\n",
+			"unsupported key 'Frobnicate' in group 'Quadlet'"},
+	} {
+		rejected := t.TempDir()
+		writeUnit(t, rejected, r.name, r.text)
+		cmd := exec.Command(generator, "-dryrun", "-user")
+		cmd.Env = append(os.Environ(), "QUADLET_UNIT_DIRS="+rejected)
+		out, err := cmd.CombinedOutput()
+		if err == nil || !strings.Contains(string(out), r.want) {
+			t.Errorf("expected the generator to reject %s, got err=%v:\n%s", r.name, err, out)
+		}
+		if got := runRule(t, "QD042", hostctx.Unknown{}, unitFromText(t, r.name, r.text)); len(got) != 1 || got[0].Severity != Error {
+			t.Errorf("the generator rejects %s, but QD042 reports %+v", r.name, got)
+		}
 	}
 
 	accepted := map[string]string{
 		"web.container": "[Container]\nImage=docker.io/library/nginx:1.27\nServiceName=frontend\n" +
 			"RemapUsers=manual\nRemapUid=0:1000:1\nRemapGid=0:1000:1\nVolatileTmp=true\n",
-		"data.volume":   "[Volume]\nServiceName=data-volume\n",
-		"app.network":   "[Network]\nServiceName=app-net\n",
-		"demo.pod":      "[Pod]\nServiceName=demo-pod\nRemapUsers=auto\nRemapUidSize=100\n",
-		"app.kube":      "[Kube]\nYaml=/dev/null\nServiceName=app-kube\nRemapUsers=keep-id\nLogOpt=tag=app\n",
-		"img.build":     "[Build]\nImageTag=localhost/img:1\nFile=/dev/null\nServiceName=img-build\n",
-		"base.image":    "[Image]\nImage=docker.io/library/busybox:1\nServiceName=base-image\n",
-		"blob.artifact": "[Artifact]\nArtifact=quay.io/example/blob:1\nServiceName=blob-artifact\n",
+		"data.volume": "[Volume]\nServiceName=data-volume\n",
+		"app.network": "[Network]\nServiceName=app-net\n",
+		"demo.pod":    "[Pod]\nServiceName=demo-pod\nRemapUsers=auto\nRemapUidSize=100\n",
+		"app.kube":    "[Kube]\nYaml=/dev/null\nServiceName=app-kube\nRemapUsers=keep-id\nLogOpt=tag=app\n",
+		"img.build":   "[Build]\nImageTag=localhost/img:1\nFile=/dev/null\nServiceName=img-build\n",
+		"base.image":  "[Image]\nImage=docker.io/library/busybox:1\nServiceName=base-image\n",
+		"blob.artifact": "[Artifact]\nArtifact=quay.io/example/blob:1\nServiceName=blob-artifact\n" +
+			"\n[Quadlet]\nDefaultDependencies=false\n",
 	}
 	dir := t.TempDir()
 	var units []*ir.Unit
