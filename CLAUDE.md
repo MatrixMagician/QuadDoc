@@ -15,7 +15,7 @@ go test ./...           # run all tests
 go run ./cmd/quaddoc    # run the CLI
 ```
 
-Golden files are refreshed with `go test ./... -update`.
+Golden files are refreshed with `QUADDOC_UPDATE_GOLDEN=1 go test ./...`.
 
 ## Project conventions
 

@@ -3,7 +3,6 @@ package output
 import (
 	"bytes"
 	"encoding/json"
-	"flag"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,7 +11,10 @@ import (
 	"github.com/MatrixMagician/quaddoc/internal/rules"
 )
 
-var update = flag.Bool("update", false, "rewrite golden files")
+// update rewrites golden files. It is an environment variable, not a flag,
+// because `go test ./...` passes a flag to every package and the packages
+// without golden files reject it (#52).
+var update = os.Getenv("QUADDOC_UPDATE_GOLDEN") == "1"
 
 // sample is a fixed set of findings covering every severity, a finding with and
 // without a line, and a multi-line remediation.
@@ -39,12 +41,13 @@ func sample() []rules.Finding {
 	}
 }
 
-// golden compares output against a checked-in file, rewriting it under -update.
+// golden compares output against a checked-in file, rewriting it under
+// QUADDOC_UPDATE_GOLDEN=1.
 func golden(t *testing.T, name string, got []byte) {
 	t.Helper()
 	path := filepath.Join("testdata", name)
 
-	if *update {
+	if update {
 		if err := os.MkdirAll("testdata", 0o755); err != nil {
 			t.Fatalf("creating testdata: %v", err)
 		}
@@ -56,7 +59,7 @@ func golden(t *testing.T, name string, got []byte) {
 
 	want, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("reading golden %s (run with -update to create it): %v", path, err)
+		t.Fatalf("reading golden %s (run with QUADDOC_UPDATE_GOLDEN=1 to create it): %v", path, err)
 	}
 	if !bytes.Equal(got, want) {
 		t.Errorf("output differs from %s.\n--- got ---\n%s\n--- want ---\n%s", path, got, want)
