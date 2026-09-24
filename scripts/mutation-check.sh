@@ -53,7 +53,7 @@ open(p,'w').write(s)"
 
 run_mutation "QD004 flags subdirectories too (too broad)" "$P/selinux.go" ./$P "
 p='$P/selinux.go'; s=open(p).read()
-s=s.replace('\t\tif clean == sp.Path {','\t\tif clean == sp.Path || strings.HasPrefix(clean, sp.Path) {')
+s=s.replace('\t\tif clean == sp.Path || (sp.Tree && pathHasPrefix(clean, sp.Path)) {','\t\tif clean == sp.Path || pathHasPrefix(clean, sp.Path) {')
 open(p,'w').write(s)"
 
 run_mutation "QD001 ignores the SELinux downgrade ladder" "$P/rules.go" ./$P "

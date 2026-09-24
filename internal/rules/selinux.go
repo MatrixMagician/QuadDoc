@@ -90,6 +90,13 @@ func init() {
 type systemPath struct {
 	Path   string
 	Reason string
+	// Tree marks a path where every path beneath it is system content too,
+	// not just the directory itself: /etc/localtime is as harmful to
+	// relabel, or as pointless to recommend :Z for, as /etc is. Left unset
+	// for paths like /var/lib, where a subdirectory is exactly what users
+	// should be mounting (see the "subdirectory is fine" case in
+	// TestQD004), so only the directory itself matches there.
+	Tree bool
 }
 
 // systemPaths are the directories where relabelling breaks the host. The list
@@ -97,23 +104,23 @@ type systemPath struct {
 // disable` comment, whereas a false negative costs them a broken system and a
 // restorecon.
 var systemPaths = []systemPath{
-	{"/", "relabelling the whole filesystem would break every confined service on the host"},
-	{"/home", "home_root_t is what allows confined services and login to work; " +
+	{Path: "/", Reason: "relabelling the whole filesystem would break every confined service on the host"},
+	{Path: "/home", Reason: "home_root_t is what allows confined services and login to work; " +
 		"relabelling it breaks user sessions"},
-	{"/etc", "etc_t is depended on by nearly every confined service"},
-	{"/usr", "usr_t covers the system's own binaries and libraries"},
-	{"/var", "relabelling all of /var affects logging, spooling, and system state"},
-	{"/var/lib", "var_lib_t is shared by most system services' state directories"},
-	{"/var/log", "var_log_t is required by rsyslog, journald, and audit"},
-	{"/var/run", "a symlink to /run, whose labels the whole system depends on"},
-	{"/run", "runtime state for every service on the machine"},
-	{"/boot", "boot_t is required by the bootloader and kernel installation"},
-	{"/dev", "device labels are managed by udev and must not be rewritten"},
-	{"/proc", "a kernel filesystem whose labels are not stored on disk"},
-	{"/sys", "a kernel filesystem whose labels are not stored on disk"},
-	{"/tmp", "tmp_t is shared by every service that writes temporary files"},
-	{"/opt", "usr_t-derived labels shared by third-party software"},
-	{"/srv", "var_t-derived labels shared by system services"},
+	{Path: "/etc", Reason: "etc_t is depended on by nearly every confined service", Tree: true},
+	{Path: "/usr", Reason: "usr_t covers the system's own binaries and libraries", Tree: true},
+	{Path: "/var", Reason: "relabelling all of /var affects logging, spooling, and system state"},
+	{Path: "/var/lib", Reason: "var_lib_t is shared by most system services' state directories"},
+	{Path: "/var/log", Reason: "var_log_t is required by rsyslog, journald, and audit"},
+	{Path: "/var/run", Reason: "a symlink to /run, whose labels the whole system depends on", Tree: true},
+	{Path: "/run", Reason: "runtime state for every service on the machine", Tree: true},
+	{Path: "/boot", Reason: "boot_t is required by the bootloader and kernel installation", Tree: true},
+	{Path: "/dev", Reason: "device labels are managed by udev and must not be rewritten", Tree: true},
+	{Path: "/proc", Reason: "a kernel filesystem whose labels are not stored on disk", Tree: true},
+	{Path: "/sys", Reason: "a kernel filesystem whose labels are not stored on disk", Tree: true},
+	{Path: "/tmp", Reason: "tmp_t is shared by every service that writes temporary files"},
+	{Path: "/opt", Reason: "usr_t-derived labels shared by third-party software"},
+	{Path: "/srv", Reason: "var_t-derived labels shared by system services"},
 }
 
 // relabelUnsafeFilesystems do not store per-file SELinux labels, so relabelling
@@ -275,20 +282,32 @@ func checkQD003(c *Context) []Finding {
 				continue
 			}
 
+			// Like QD001/QD002, advice about relabelling is meaningless
+			// without SELinux and is suppressed entirely when it is absent
+			// from the kernel, per ADR-0004.
+			severity, confidence, downgraded, report := selinuxFinding(c, "QD003", Warning)
+			if !report {
+				continue
+			}
+
 			// A filesystem already carrying a context= option has a
 			// whole-filesystem label, and relabelling it is both unnecessary
 			// and ineffective.
 			if strings.Contains(mount.Options, "context=") {
-				findings = append(findings, Finding{
-					Severity:   Warning,
-					Confidence: Confirmed,
+				finding := Finding{
+					Severity:   severity,
+					Confidence: confidence,
 					Unit:       u.Path,
 					Line:       m.Line,
 					Message: fmt.Sprintf("%s is on a filesystem mounted with context=, so the relabelling option does nothing",
 						m.Source),
 					Remediation: "Remove the :z or :Z option. The filesystem already carries a " +
 						"single label set at mount time, which relabelling cannot change.",
-				})
+				}
+				if downgraded {
+					finding = finding.MarkHostDowngraded()
+				}
+				findings = append(findings, finding)
 				continue
 			}
 
@@ -300,9 +319,9 @@ func checkQD003(c *Context) []Finding {
 				continue
 			}
 
-			findings = append(findings, Finding{
-				Severity:   Warning,
-				Confidence: Confirmed,
+			finding := Finding{
+				Severity:   severity,
+				Confidence: confidence,
 				Unit:       u.Path,
 				Line:       m.Line,
 				Message: fmt.Sprintf("%s is on a %s filesystem, where relabelling will not work: %s",
@@ -312,7 +331,11 @@ func checkQD003(c *Context) []Finding {
 					"    context=\"system_u:object_r:container_file_t:s0\"\n\n"+
 					"On a shared filesystem, coordinate that label with whatever else mounts it.",
 					mount.MountPoint),
-			})
+			}
+			if downgraded {
+				finding = finding.MarkHostDowngraded()
+			}
+			findings = append(findings, finding)
 		}
 	}
 	return findings
@@ -355,23 +378,41 @@ func checkQD004(c *Context) []Finding {
 	return findings
 }
 
-// systemPathFor reports whether a path is, or lies directly at, a system
-// directory that must not be relabelled.
+// systemPathFor reports whether a path is, or lies under, a system directory
+// that must not be relabelled.
 //
-// Only the directory itself and its immediate parents match: `/var/lib` is on
-// the list, but `/var/lib/myapp` is a perfectly reasonable thing to mount, and
-// flagging it would make the rule useless.
+// For most entries only the directory itself matches: `/var/lib` is on the
+// list, but `/var/lib/myapp` is a perfectly reasonable thing to mount, and
+// flagging it would make the rule useless. A handful of trees are the
+// exception (systemPath.Tree): under /etc, /usr, /dev, /proc, /sys, /run,
+// /var/run and /boot, everything is system content, so `/etc/localtime` and
+// `/dev/dri` match too. podman-run(1), --volume: "Do not relabel system
+// files and directories."
 func systemPathFor(source string) (systemPath, bool) {
 	clean := strings.TrimRight(source, "/")
 	if clean == "" {
 		clean = "/"
 	}
 	for _, sp := range systemPaths {
-		if clean == sp.Path {
+		if clean == sp.Path || (sp.Tree && pathHasPrefix(clean, sp.Path)) {
 			return sp, true
 		}
 	}
 	return systemPath{}, false
+}
+
+// pathHasPrefix reports whether path lies within dir, comparing whole path
+// components so that `/etcfoo` is not treated as being under `/etc`. Copied
+// from internal/hostctx.pathHasPrefix (unexported there) rather than
+// depending on another package's internals across a boundary.
+func pathHasPrefix(path, dir string) bool {
+	if dir == "/" {
+		return true
+	}
+	if path == dir {
+		return true
+	}
+	return len(path) > len(dir) && path[:len(dir)] == dir && path[len(dir)] == '/'
 }
 
 // withOption renders a mount with an option added.

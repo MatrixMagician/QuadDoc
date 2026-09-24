@@ -74,6 +74,32 @@ func TestQD001(t *testing.T) {
 	}
 }
 
+func TestQD001SkipsSystemTreeSources(t *testing.T) {
+	// systemPathFor's Tree paths cover children too, not just the directory
+	// itself: recommending :Z on /etc/localtime would relabel a file every
+	// confined service depends on, exactly what QD001 must not do. Issue #16.
+	tests := []struct {
+		name   string
+		source string
+	}{
+		{"a file under /etc", "/etc/localtime"},
+		{"a device path under /dev", "/dev/dri"},
+		{"a deep path under /run", "/run/user/1000/podman/podman.sock"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			u := unitFromText(t, "web.container",
+				"[Container]\nImage=nginx\nVolume="+tt.source+":/data\n")
+
+			got := runRule(t, "QD001", enforcing, u)
+			if len(got) != 0 {
+				t.Errorf("QD001 should leave %s to QD004, not recommend :Z: %+v", tt.source, got)
+			}
+		})
+	}
+}
+
 func TestQD001SuggestsSharedLabelForSharedSource(t *testing.T) {
 	// The whole point of computing sharing project-wide: the right option
 	// depends on units other than the one being examined.
@@ -291,6 +317,48 @@ func TestQD003UsesTheLongestMatchingMount(t *testing.T) {
 	}
 }
 
+func TestQD003SuppressedWithoutSELinux(t *testing.T) {
+	// checkQD003 must consult selinuxFinding like QD001/QD002 do: relabelling
+	// advice is meaningless on a kernel without SELinux, and ADR-0004 says
+	// such rules are suppressed entirely, not merely downgraded. Issue #16.
+	host := hostctx.Static{
+		SELinuxMode: hostctx.SELinuxDisabled,
+		Mounts: []hostctx.Mount{
+			{MountPoint: "/", FSType: "ext4"},
+			{MountPoint: "/mnt/nfs", FSType: "nfs4"},
+		},
+	}
+	u := unitFromText(t, "web.container",
+		"[Container]\nImage=nginx\nVolume=/mnt/nfs/data:/data:Z\n")
+
+	got := runRule(t, "QD003", host, u)
+	if len(got) != 0 {
+		t.Errorf("QD003 fired with SELinux absent from the kernel: %+v", got)
+	}
+}
+
+func TestQD003DowngradesUnderPermissive(t *testing.T) {
+	// Still worth saying under permissive: turning enforcing back on would
+	// break the container, same ladder as QD001/QD002.
+	host := hostctx.Static{
+		SELinuxMode: hostctx.SELinuxPermissive,
+		Mounts: []hostctx.Mount{
+			{MountPoint: "/", FSType: "ext4"},
+			{MountPoint: "/mnt/nfs", FSType: "nfs4"},
+		},
+	}
+	u := unitFromText(t, "web.container",
+		"[Container]\nImage=nginx\nVolume=/mnt/nfs/data:/data:Z\n")
+
+	got := runRule(t, "QD003", host, u)
+	if len(got) != 1 {
+		t.Fatalf("findings = %d, want 1: %+v", len(got), got)
+	}
+	if got[0].Severity != Note {
+		t.Errorf("severity = %v, want Note under permissive", got[0].Severity)
+	}
+}
+
 func TestQD004(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -348,6 +416,32 @@ func TestQD004FiresRegardlessOfSELinuxMode(t *testing.T) {
 			got := runRule(t, "QD004", hostctx.Static{SELinuxMode: mode}, u)
 			if len(got) != 1 {
 				t.Errorf("findings = %d under %s, want 1", len(got), mode)
+			}
+		})
+	}
+}
+
+func TestQD004FlagsSystemTreeSources(t *testing.T) {
+	// The same trees QD001 exempts are QD004's business: relabelling
+	// /etc/localtime is exactly as harmful as relabelling /etc itself.
+	// Issue #16.
+	tests := []struct {
+		name   string
+		source string
+	}{
+		{"a file under /etc", "/etc/localtime"},
+		{"a device path under /dev", "/dev/dri"},
+		{"a deep path under /run", "/run/user/1000/podman/podman.sock"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			u := unitFromText(t, "web.container",
+				"[Container]\nImage=nginx\nVolume="+tt.source+":/data:Z\n")
+
+			got := runRule(t, "QD004", enforcing, u)
+			if len(got) != 1 {
+				t.Fatalf("QD004 should flag relabelling %s: %+v", tt.source, got)
 			}
 		})
 	}
