@@ -24,6 +24,7 @@ Every rule cites the documentation or observed behaviour it encodes.
 | [QD040](#qd040) | warning |  | AutoUpdate=registry needs a fully-qualified image reference |
 | [QD041](#qd041) | warning |  | Credential passed as an environment value in the unit file |
 | [QD042](#qd042) | warning |  | Key is not recognised by Quadlet and will be ignored |
+| [QD043](#qd043) | error |  | Container unit has neither Image= nor Rootfs= |
 
 ## QD000
 
@@ -223,4 +224,14 @@ A unit file is world-readable in the Quadlet search path and is usually committe
 Quadlet reads the keys it knows and ignores the rest without complaint, so a typo'd key looks like configuration that simply does not work. This most often bites when a key is spelled as its podman flag (Volumes= for Volume=) or as the compose key it came from.
 
 *Source: podman-systemd.unit(5) lists the keys each unit type accepts. The set is generated from the installed manual page by internal/rules/genkeys; see docs/adr/0002-minimum-podman-version.md for why per-version deltas are not attempted in v1.*
+
+## QD043
+
+**Container unit has neither Image= nor Rootfs=**
+
+- Default severity: `error`
+
+A container has to come from somewhere: a pulled image or an already-unpacked rootfs. A unit that sets neither passes lint and then fails at generation, which is a worse time to find out than now. There is no mechanical fix, because only the author knows which of the two was intended.
+
+*Source: podman-systemd.unit(5), Image=: "The image to run in the container." Rootfs=: "This option conflicts with the Image option." Neither is documented as optional on its own; the generator confirms it (observed, Podman 5.8.4): converting "x.container": no Image or Rootfs key specified.*
 

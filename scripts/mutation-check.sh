@@ -102,6 +102,11 @@ p='$P/hygiene.go'; s=open(p).read()
 s=s.replace('\t\t\tcase ref.Registry == \"\":','\t\t\tcase false:')
 open(p,'w').write(s)"
 
+run_mutation "QD043 stops requiring Image= or Rootfs=" "$P/image.go" ./$P "
+p='$P/image.go'; s=open(p).read()
+s=s.replace('\t\tif u.Image != \"\" || hasRootfs(u) {','\t\tif true {')
+open(p,'w').write(s)"
+
 run_mutation "QD022 stops exempting pod members" "$P/install.go" ./$P "
 p='$P/install.go'; s=open(p).read()
 s=s.replace('\t\tif u.Pod != \"\" {\n\t\t\tcontinue\n\t\t}','')

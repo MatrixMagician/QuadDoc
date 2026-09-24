@@ -217,7 +217,7 @@ up on.
 
 ## Rules
 
-19 rules across five families. See the [full reference](docs/rules.md), or
+20 rules across five families. See the [full reference](docs/rules.md), or
 `quaddoc rules QD001` for one.
 
 | Family | Rules |
@@ -226,7 +226,7 @@ up on.
 | Rootless UID/GID | QD010 bind ownership mismatch, QD011 named group in `GroupAdd=`, QD012 volume chown, QD013 ID outside the subordinate range |
 | Lifecycle | QD020 ordering is not a readiness gate, QD021 `unless-stopped`, QD022 missing `[Install]`, QD023 unhonoured `[Install]` key |
 | Networking | QD030 no shared network, QD031 privileged port, QD032 name collision |
-| Hygiene | QD040 `AutoUpdate=registry` with an unqualified image, QD041 credential in the unit, QD042 unrecognised key |
+| Hygiene | QD040 `AutoUpdate=registry` with an unqualified image, QD041 credential in the unit, QD042 unrecognised key, QD043 neither `Image=` nor `Rootfs=` |
 
 Adding a rule is a single-file affair: the struct, its registration, its
 documentation, and its tests live together, and the same metadata renders the
