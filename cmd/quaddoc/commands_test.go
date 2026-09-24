@@ -256,6 +256,47 @@ func TestFixRuleFilter(t *testing.T) {
 	}
 }
 
+// TestFixHonoursConfigAndSuppressions is the regression test for fix building
+// its own engine: it ignored .quaddoc.toml and inline suppressions, so it
+// rewrote volumes that lint had been told to leave alone.
+func TestFixHonoursConfigAndSuppressions(t *testing.T) {
+	bin := buildCLI(t)
+	const unit = "[Container]\nImage=docker.io/library/nginx:1.27\nVolume=/srv/site:/data\n" +
+		"[Install]\nWantedBy=default.target\n"
+	const labelled = "[Container]\nImage=docker.io/library/nginx:1.27\nVolume=/srv/site:/data:Z\n" +
+		"[Install]\nWantedBy=default.target\n"
+	const inline = "# quaddoc: disable=QD001 labelled by fstab\n" + unit
+
+	for _, tc := range []struct {
+		name, unit, config, want string
+	}{
+		{"unconfigured", unit, "", labelled},
+		{"config off", unit, "[rules]\nQD001 = \"off\"\n", unit},
+		{"inline suppression", inline, "", inline},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := writeUnits(t, map[string]string{"web.container": tc.unit})
+			if tc.config != "" {
+				if err := os.WriteFile(filepath.Join(dir, ".quaddoc.toml"), []byte(tc.config), 0o644); err != nil {
+					t.Fatalf("writing config: %v", err)
+				}
+			}
+
+			_, stderr, code := run(t, bin, "fix", dir, "--write")
+			if code != 0 {
+				t.Fatalf("exit = %d\nstderr: %s", code, stderr)
+			}
+			got, _ := os.ReadFile(filepath.Join(dir, "web.container"))
+			if string(got) != tc.want {
+				t.Errorf("after fix:\n%s\nwant:\n%s", got, tc.want)
+			}
+			if tc.want != labelled && stderr != "" {
+				t.Errorf("a suppressed finding was reported as needing a decision:\n%s", stderr)
+			}
+		})
+	}
+}
+
 func TestCaptureContextAndReplay(t *testing.T) {
 	// Capture on the broken machine, lint anywhere. The two must agree, or
 	// every context-dependent finding becomes untrustworthy.

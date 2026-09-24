@@ -86,32 +86,11 @@ func runLint(args []string) int {
 		return 2
 	}
 
-	projectConfig, err := config.Load(paths[0])
+	_, findings, err := audit(paths, *disable, *hostContext)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "quaddoc: %v\n", err)
 		return 2
 	}
-	ruleConfig := projectConfig.RuleConfig()
-	for _, id := range strings.Split(*disable, ",") {
-		if id = strings.ToUpper(strings.TrimSpace(id)); id != "" {
-			ruleConfig.Disabled[id] = true
-		}
-	}
-
-	project, err := loadProject(paths)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "quaddoc: %v\n", err)
-		return 2
-	}
-
-	host, err := resolveHostContext(*hostContext)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "quaddoc: %v\n", err)
-		return 2
-	}
-
-	engine := &rules.Engine{Config: ruleConfig, Host: host}
-	findings := projectConfig.ApplySuppressions(engine.Run(project), suppressions(project))
 
 	switch {
 	case *asSARIF:
@@ -394,20 +373,11 @@ func runFix(args []string) int {
 		return 2
 	}
 
-	project, err := loadProject(paths)
+	project, findings, err := audit(paths, "", *hostContext)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "quaddoc: %v\n", err)
 		return 2
 	}
-
-	host, err := resolveHostContext(*hostContext)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "quaddoc: %v\n", err)
-		return 2
-	}
-
-	engine := &rules.Engine{Host: host}
-	findings := engine.Run(project)
 
 	opts := fix.Options{Only: map[string]bool{}}
 	for _, id := range strings.Split(*only, ",") {
@@ -481,6 +451,35 @@ func reportUnfixed(unfixed []rules.Finding) {
 		fmt.Fprintf(os.Stderr, "  %s (%d)\n", summary, byRule[id])
 	}
 	fmt.Fprintln(os.Stderr, "\nRun `quaddoc lint` to see them in full.")
+}
+
+// audit loads the project and runs the rules over it exactly as lint reports
+// them: project configuration, then disabled rules, then inline suppressions.
+// fix shares it so that it never acts on a finding lint would not show.
+func audit(paths []string, disable, hostContext string) (*ir.Project, []rules.Finding, error) {
+	projectConfig, err := config.Load(paths[0])
+	if err != nil {
+		return nil, nil, err
+	}
+	ruleConfig := projectConfig.RuleConfig()
+	for _, id := range strings.Split(disable, ",") {
+		if id = strings.ToUpper(strings.TrimSpace(id)); id != "" {
+			ruleConfig.Disabled[id] = true
+		}
+	}
+
+	project, err := loadProject(paths)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	host, err := resolveHostContext(hostContext)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	engine := &rules.Engine{Config: ruleConfig, Host: host}
+	return project, projectConfig.ApplySuppressions(engine.Run(project), suppressions(project)), nil
 }
 
 // loadProject reads every named path into one project. Rules reason across the
