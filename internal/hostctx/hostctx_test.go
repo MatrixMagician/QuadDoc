@@ -60,6 +60,32 @@ func TestMountForPicksTheLongestPrefix(t *testing.T) {
 	}
 }
 
+func TestMountForPicksTheLaterOfTwoMountsOnOnePoint(t *testing.T) {
+	// The kernel lists mounts in mount order, and a later mount on the same
+	// point hides the earlier one. Picking the first would put this path on
+	// ext4 when it is really on NFS, and QD003 would stay silent.
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "proc/self/mountinfo"),
+		"22 1 0:20 / / rw,relatime shared:1 - ext4 /dev/sda1 rw\n"+
+			"40 22 8:2 / /mnt/data rw,relatime shared:5 - ext4 /dev/sdb1 rw\n"+
+			"41 22 0:45 / /mnt/data rw,relatime shared:9 - nfs4 nas:/export/data rw,vers=4.2\n")
+
+	m, ok := NewReplay(dir).MountFor("/mnt/data/app")
+	if !ok || m.FSType != "nfs4" {
+		t.Errorf("MountFor(/mnt/data/app) = %q/%v, want nfs4/true", m.FSType, ok)
+	}
+}
+
+func writeFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestUnescapeOctal(t *testing.T) {
 	// The kernel escapes awkward characters in mount points, so a path with a
 	// space arrives as /mnt/my\040disk.

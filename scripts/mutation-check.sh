@@ -129,7 +129,12 @@ open(p,'w').write(s)"
 
 run_mutation "hostctx picks the shortest mount prefix" "internal/hostctx/hostctx.go" ./internal/hostctx "
 p='internal/hostctx/hostctx.go'; s=open(p).read()
-s=s.replace('if !found || len(m.MountPoint) > len(best.MountPoint) {','if !found || len(m.MountPoint) < len(best.MountPoint) {')
+s=s.replace('if !found || len(m.MountPoint) >= len(best.MountPoint) {','if !found || len(m.MountPoint) < len(best.MountPoint) {')
+open(p,'w').write(s)"
+
+run_mutation "hostctx keeps the shadowed mount" "internal/hostctx/hostctx.go" ./internal/hostctx "
+p='internal/hostctx/hostctx.go'; s=open(p).read()
+s=s.replace('if !found || len(m.MountPoint) >= len(best.MountPoint) {','if !found || len(m.MountPoint) > len(best.MountPoint) {')
 open(p,'w').write(s)"
 
 run_mutation "capture copies unit file contents" "internal/hostctx/live.go" ./internal/hostctx "
