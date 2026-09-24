@@ -15,19 +15,24 @@
 #
 # Usage: bash scripts/mutation-check.sh
 set -uo pipefail
-cd /home/oliverh/repos/github/MatrixMagician/QuadDoc
+cd "$(dirname "$0")/.."
+
+# One backup per run, so concurrent runs in separate worktrees cannot restore
+# each other's files.
+bak=$(mktemp)
+trap 'rm -f "$bak"' EXIT
 
 run_mutation() {
   local name="$1" file="$2" pkg="$3" script="$4"
-  cp "$file" /tmp/mut.bak
-  python3 -c "$script" || { cp /tmp/mut.bak "$file"; printf '%-46s SCRIPT-FAILED\n' "$name"; return; }
+  cp "$file" "$bak"
+  python3 -c "$script" || { cp "$bak" "$file"; printf '%-46s SCRIPT-FAILED\n' "$name"; return; }
 
   # A mutation whose target string has drifted changes nothing and then reports
   # SURVIVED, which looks like a missing test but is a stale script. Refactors
   # cause this routinely, so check the file actually changed.
-  if cmp -s /tmp/mut.bak "$file"; then
+  if cmp -s "$bak" "$file"; then
     printf '%-46s NOT-APPLIED  <-- stale mutation, fix the script\n' "$name"
-    cp /tmp/mut.bak "$file"
+    cp "$bak" "$file"
     return
   fi
 
@@ -36,7 +41,7 @@ run_mutation() {
   else
     printf '%-46s caught\n' "$name"
   fi
-  cp /tmp/mut.bak "$file"
+  cp "$bak" "$file"
 }
 
 P="internal/rules"
