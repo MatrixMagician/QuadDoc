@@ -15,6 +15,7 @@
 package fix
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -148,6 +149,12 @@ func networkUnitChange(project *ir.Project, name string) (Change, error) {
 	}
 
 	path := filepath.Join(project.Root, name+".network")
+	// A file the project did not load, such as a sibling left out of the
+	// paths given, is not ours to replace.
+	if _, err := os.Lstat(path); err == nil {
+		return Change{}, fmt.Errorf("%s already exists but is not among the units being fixed; "+
+			"include it in the paths given to quaddoc, or move it aside, and re-run", path)
+	}
 	content := fmt.Sprintf(`# Created by quaddoc to fix QD030.
 #
 # Podman's default network has DNS disabled, so containers on it cannot resolve
@@ -364,11 +371,25 @@ func Write(result *Result) error {
 		if !change.Modified() {
 			continue
 		}
-		if err := os.WriteFile(change.Path, []byte(change.After), 0o644); err != nil {
+		if err := writeFile(change); err != nil {
 			return fmt.Errorf("writing %s: %w", change.Path, err)
 		}
 	}
 	return nil
+}
+
+// writeFile writes one change. A created file is opened with O_EXCL, so a file
+// that appeared since Apply checked the disk is never truncated.
+func writeFile(change Change) error {
+	if !change.Created {
+		return os.WriteFile(change.Path, []byte(change.After), 0o644)
+	}
+	f, err := os.OpenFile(change.Path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		return err
+	}
+	_, err = f.WriteString(change.After)
+	return errors.Join(err, f.Close())
 }
 
 // Diff renders a unified diff of a change, for previewing.

@@ -505,6 +505,50 @@ func TestFixQD030GuardsAgainstDuplicateNetwork(t *testing.T) {
 	}
 }
 
+// TestFixRefusesToOverwriteANetworkOutsideTheProject guards issue #11: fixing
+// a subset of a directory's units once replaced a hand-written shared.network
+// with the template and reported it as created.
+func TestFixRefusesToOverwriteANetworkOutsideTheProject(t *testing.T) {
+	dir, project := writeUnits(t, map[string]string{
+		"a.container": "[Container]\nImage=nginx\n[Install]\nWantedBy=default.target\n",
+		"b.container": "[Container]\nImage=postgres\n[Install]\nWantedBy=default.target\n",
+	})
+	existing := filepath.Join(dir, "shared.network")
+	handWritten := "[Network]\nSubnet=10.89.0.0/24\n"
+	if err := os.WriteFile(existing, []byte(handWritten), 0o644); err != nil {
+		t.Fatalf("writing: %v", err)
+	}
+
+	engine := &rules.Engine{Host: hostctx.Static{SELinuxMode: hostctx.SELinuxEnforcing}}
+	_, err := Apply(project, engine.Run(project), Options{})
+
+	want := existing + " already exists but is not among the units being fixed; " +
+		"include it in the paths given to quaddoc, or move it aside, and re-run"
+	if err == nil || err.Error() != want {
+		t.Errorf("Apply error = %v, want %q", err, want)
+	}
+	if got := snapshot(t, dir)["shared.network"]; got != handWritten {
+		t.Errorf("shared.network was changed:\n%s", got)
+	}
+}
+
+// TestWriteNeverTruncatesAFileItMeantToCreate covers the window between Apply
+// checking the disk and Write running.
+func TestWriteNeverTruncatesAFileItMeantToCreate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "shared.network")
+	if err := os.WriteFile(path, []byte("[Network]\n"), 0o644); err != nil {
+		t.Fatalf("writing: %v", err)
+	}
+
+	err := Write(&Result{Changes: []Change{{Path: path, After: "template\n", Created: true}}})
+	if err == nil {
+		t.Error("Write replaced a file it was only meant to create")
+	}
+	if got, _ := os.ReadFile(path); string(got) != "[Network]\n" {
+		t.Errorf("the existing file was changed to %q", got)
+	}
+}
+
 func countOccurrences(lines []string, want string) int {
 	n := 0
 	for _, line := range lines {
