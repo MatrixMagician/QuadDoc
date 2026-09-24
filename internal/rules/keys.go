@@ -82,10 +82,7 @@ func checkQD042(c *Context) []Finding {
 		}
 
 		for _, e := range u.Entries {
-			if !strings.EqualFold(e.Section, section) {
-				continue
-			}
-			if accepted[canonicalKey(accepted, e.Key)] {
+			if e.Section != section || accepted[e.Key] {
 				continue
 			}
 
@@ -98,7 +95,11 @@ func checkQD042(c *Context) []Finding {
 				"against (%s), you can pass it through with PodmanArgs=.",
 				generatedFromPodman)
 
-			if suggestion, known := commonMistakes[strings.ToUpper(e.Key)]; known {
+			suggestion, known := commonMistakes[strings.ToUpper(e.Key)]
+			if !known {
+				suggestion, known = caseMismatch(accepted, e.Key)
+			}
+			if known {
 				if strings.Contains(suggestion, " ") {
 					remediation = suggestion + ".\n\n" + remediation
 				} else {
@@ -123,16 +124,14 @@ func checkQD042(c *Context) []Finding {
 	return findings
 }
 
-// canonicalKey matches a key case-insensitively against the accepted set,
-// since systemd itself is case-insensitive about key names.
-func canonicalKey(accepted map[string]bool, key string) string {
-	if accepted[key] {
-		return key
-	}
+// caseMismatch finds the accepted key a wrongly-cased key was meant to be.
+// Quadlet matches keys exactly and rejects `image=` as an unsupported key
+// (verified against Podman 5.8.4), so the case is the whole mistake.
+func caseMismatch(accepted map[string]bool, key string) (string, bool) {
 	for candidate := range accepted {
 		if strings.EqualFold(candidate, key) {
-			return candidate
+			return candidate, true
 		}
 	}
-	return key
+	return "", false
 }

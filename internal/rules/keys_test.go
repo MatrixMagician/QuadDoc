@@ -40,10 +40,12 @@ func TestQD042(t *testing.T) {
 			wantFindings: 1, wantContains: "will be ignored",
 		},
 		{
-			name:         "keys are matched case-insensitively, as systemd does",
+			// Verified against Podman 5.8.4: the generator rejects this unit
+			// with "unsupported key 'image' in group 'Container'".
+			name:         "keys are matched case-sensitively, as the generator does",
 			unit:         "web.container",
-			text:         "[Container]\nimage=nginx\nvolume=/srv:/data\n",
-			wantFindings: 0,
+			text:         "[Container]\nImage=nginx\nimage=nginx\n",
+			wantFindings: 1, wantContains: "did you mean Image=?",
 		},
 		{
 			// [Unit], [Service], and [Install] pass straight through to

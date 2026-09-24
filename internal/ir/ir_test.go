@@ -60,6 +60,21 @@ func TestParseMount(t *testing.T) {
 			},
 		},
 		{
+			// Verified against Podman 5.8.4: `Volume=.:/app` generates
+			// `-v <unit dir>:/app`, not a volume named `.`.
+			name:  "bare dot source is a bind to the unit's directory",
+			value: ".:/app",
+			want:  Mount{Source: ".", Destination: "/app", Type: MountBind},
+		},
+		{
+			name:  "bare dot-dot source is a bind to the parent directory",
+			value: "..:/parent:Z",
+			want: Mount{
+				Source: "..", Destination: "/parent",
+				Options: []string{"Z"}, Type: MountBind,
+			},
+		},
+		{
 			name:  "systemd specifier source is a bind",
 			value: "%h/data:/data",
 			want:  Mount{Source: "%h/data", Destination: "/data", Type: MountBind},
@@ -125,6 +140,12 @@ func TestParsePort(t *testing.T) {
 		{value: "127.0.0.1:8080:80", wantHostIP: "127.0.0.1", wantHost: 8080, wantContainer: 80, wantProto: "tcp", wantOK: true},
 		{value: "53:53/udp", wantHost: 53, wantContainer: 53, wantProto: "udp", wantOK: true},
 		{value: "443:443", wantHost: 443, wantContainer: 443, wantProto: "tcp", wantOK: true},
+		// A range is modelled by its low bound: verified against Podman
+		// 5.8.4, `PublishPort=80-81:8080-8081` generates `--publish
+		// 80-81:8080-8081`, so the privileged port 80 is really bound.
+		{value: "80-81:8080-8081", wantHost: 80, wantContainer: 8080, wantProto: "tcp", wantOK: true},
+		{value: "127.0.0.1:80-81:8080-8081/udp", wantHostIP: "127.0.0.1", wantHost: 80, wantContainer: 8080, wantProto: "udp", wantOK: true},
+		{value: "8080-8081", wantContainer: 8080, wantProto: "tcp", wantOK: true},
 		{value: "not-a-port", wantOK: false},
 	}
 

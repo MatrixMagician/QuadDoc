@@ -186,7 +186,20 @@ func (u *Unit) KeyLine(key string) int {
 	if u.keyLines == nil {
 		return 0
 	}
-	return u.keyLines[strings.ToLower(key)]
+	return u.keyLines[key]
+}
+
+// EntryLine returns the line of the last assignment of value to key in
+// section, or 0 if there is none. Unlike KeyLine it reaches every section and
+// tells repeated keys apart by value.
+func (u *Unit) EntryLine(section, key, value string) int {
+	line := 0
+	for _, e := range u.Entries {
+		if e.Section == section && e.Key == key && e.Value == value {
+			line = e.Line
+		}
+	}
+	return line
 }
 
 // SetKeyLine records where a key was declared. Used by loaders.
@@ -194,7 +207,7 @@ func (u *Unit) SetKeyLine(key string, line int) {
 	if u.keyLines == nil {
 		u.keyLines = make(map[string]int)
 	}
-	u.keyLines[strings.ToLower(key)] = line
+	u.keyLines[key] = line
 }
 
 // SourceFile is the parsed-file behaviour the IR needs, kept as an interface so

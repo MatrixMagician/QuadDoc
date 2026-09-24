@@ -94,34 +94,55 @@ func FromParsed(f *quadlet.File) *Unit {
 
 	for _, e := range f.Section(section) {
 		u.SetKeyLine(e.Key, e.Line)
-		switch strings.ToLower(e.Key) {
-		case "image":
+		// An empty assignment resets a list-valued key (systemd.syntax(7));
+		// the generator honours this for every list modelled here.
+		if e.Value == "" {
+			switch e.Key {
+			case "Volume":
+				u.Mounts = nil
+				continue
+			case "PublishPort":
+				u.Ports = nil
+				continue
+			case "Network":
+				u.Networks = nil
+				continue
+			case "Environment":
+				u.Environment = nil
+				continue
+			case "GroupAdd":
+				u.GroupAdd = nil
+				continue
+			}
+		}
+		switch e.Key {
+		case "Image":
 			u.Image = e.Value
-		case "volume":
+		case "Volume":
 			u.Mounts = append(u.Mounts, ParseMount(e.Value, e.Line))
-		case "publishport":
+		case "PublishPort":
 			if p, ok := ParsePort(e.Value, e.Line); ok {
 				u.Ports = append(u.Ports, p)
 			}
-		case "network":
+		case "Network":
 			u.Networks = append(u.Networks, e.Value)
-		case "environment":
+		case "Environment":
 			u.Environment = append(u.Environment, parseEnv(e.Value, e.Line)...)
-		case "user":
+		case "User":
 			u.User = e.Value
-		case "group":
+		case "Group":
 			u.Group = e.Value
-		case "groupadd":
+		case "GroupAdd":
 			u.GroupAdd = append(u.GroupAdd, e.Value)
-		case "userns":
+		case "UserNS":
 			u.UserNS = e.Value
-		case "autoupdate":
+		case "AutoUpdate":
 			u.AutoUpdate = e.Value
-		case "pod":
+		case "Pod":
 			u.Pod = e.Value
-		case "notify":
+		case "Notify":
 			u.Notify = e.Value
-		case "healthcmd":
+		case "HealthCmd":
 			u.HasHealthCmd = e.Value != "" && e.Value != "none"
 		}
 	}
@@ -175,9 +196,8 @@ func ParseMount(value string, line int) Mount {
 	case strings.HasSuffix(m.Source, ".volume"):
 		m.Type = MountNamed
 		m.UnitRef = strings.TrimSuffix(m.Source, ".volume")
-	case strings.HasPrefix(m.Source, "/"), strings.HasPrefix(m.Source, "./"),
-		strings.HasPrefix(m.Source, "../"), strings.HasPrefix(m.Source, "~"),
-		strings.HasPrefix(m.Source, "%"):
+	case strings.HasPrefix(m.Source, "/"), strings.HasPrefix(m.Source, "."),
+		strings.HasPrefix(m.Source, "~"), strings.HasPrefix(m.Source, "%"):
 		// Absolute, relative, home-anchored, and systemd-specifier paths are
 		// all bind mounts. Quadlet resolves a leading `.` relative to the
 		// unit file's own location.
@@ -244,7 +264,7 @@ func ParsePort(value string, line int) (Port, bool) {
 	switch len(fields) {
 	case 1:
 		// Container port only: Podman picks a random host port.
-		n, err := strconv.Atoi(strings.TrimSpace(fields[0]))
+		n, err := portNumber(fields[0])
 		if err != nil {
 			return p, false
 		}
@@ -255,10 +275,10 @@ func ParsePort(value string, line int) (Port, bool) {
 		if p.HostIP == "" && !isNumeric(host) && host != "" {
 			// A bare address with no host port, e.g. `127.0.0.1::80`.
 			p.HostIP = host
-		} else if n, err := strconv.Atoi(strings.TrimSpace(host)); err == nil {
+		} else if n, err := portNumber(host); err == nil {
 			p.HostPort = n
 		}
-		n, err := strconv.Atoi(strings.TrimSpace(container))
+		n, err := portNumber(container)
 		if err != nil {
 			return p, false
 		}
@@ -268,10 +288,10 @@ func ParsePort(value string, line int) (Port, bool) {
 		if p.HostIP == "" {
 			p.HostIP = fields[0]
 		}
-		if n, err := strconv.Atoi(strings.TrimSpace(fields[1])); err == nil {
+		if n, err := portNumber(fields[1]); err == nil {
 			p.HostPort = n
 		}
-		n, err := strconv.Atoi(strings.TrimSpace(fields[2]))
+		n, err := portNumber(fields[2])
 		if err != nil {
 			return p, false
 		}
@@ -285,8 +305,15 @@ func isNumeric(s string) bool {
 	if s == "" {
 		return false
 	}
-	_, err := strconv.Atoi(strings.TrimSpace(s))
+	_, err := portNumber(s)
 	return err == nil
+}
+
+// portNumber parses one port field. A range such as `80-81` yields its low
+// bound, which is the port a privilege check cares about.
+func portNumber(s string) (int, error) {
+	low, _, _ := strings.Cut(strings.TrimSpace(s), "-")
+	return strconv.Atoi(low)
 }
 
 // parseEnv decomposes an `Environment=` value, which may carry several

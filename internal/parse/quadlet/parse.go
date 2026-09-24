@@ -6,9 +6,9 @@
 //   - Keys may repeat within a section. `Volume=` appearing five times is five
 //     mounts, not one key overwritten four times, so the model is a list of
 //     entries rather than a map.
-//   - A line ending in a backslash continues onto the next line. systemd joins
-//     the fragments with a space, so the joined value is not simply the
-//     concatenation of the parts.
+//   - A line ending in a backslash continues onto the next line. Quadlet
+//     concatenates the trimmed fragments and skips comment and blank lines in
+//     between; see splitEntry.
 //   - Both `#` and `;` start a comment, but only at the beginning of a line.
 //     A `#` inside a value is part of the value.
 //   - The same section may appear more than once; systemd treats the second
@@ -130,13 +130,16 @@ func Parse(path string, r io.Reader) (*File, error) {
 			i++
 
 		default:
-			// An entry, possibly continued. Gather physical lines while each
-			// ends in an unescaped backslash.
+			// An entry, possibly continued. Gather physical lines while the
+			// last content line ends in a backslash; comment and blank lines
+			// in between belong to the group but not to the value.
 			group := []string{raw}
-			for continues(raw) && i+1 < len(physical) {
+			for strings.HasSuffix(strings.TrimSpace(raw), `\`) && i+1 < len(physical) {
 				i++
-				raw = physical[i]
-				group = append(group, raw)
+				group = append(group, physical[i])
+				if !skipped(physical[i]) {
+					raw = physical[i]
+				}
 			}
 			i++
 
@@ -154,18 +157,20 @@ func Parse(path string, r io.Reader) (*File, error) {
 	return f, nil
 }
 
-// continues reports whether a physical line is continued on the next one.
-// A backslash that is itself escaped does not continue the line.
-func continues(s string) bool {
-	trailing := 0
-	for i := len(s) - 1; i >= 0 && s[i] == '\\'; i-- {
-		trailing++
-	}
-	return trailing%2 == 1
+// skipped reports whether a physical line inside a continuation is dropped
+// from the value: Quadlet skips blank and comment lines there.
+func skipped(s string) bool {
+	t := strings.TrimSpace(s)
+	return t == "" || strings.HasPrefix(t, "#") || strings.HasPrefix(t, ";")
 }
 
 // splitEntry turns a group of physical lines into a key and a logical value.
-// systemd joins continuation fragments with a space.
+//
+// This follows Quadlet's parser rather than systemd's, since Quadlet is what
+// reads these files. Verified against Podman 5.8.4: each line is trimmed, the
+// trailing backslash is removed, and the next content line is appended with
+// nothing in between, so `a \` then `b` gives `a b` but `a\` then `b` gives
+// `ab`. Any trailing backslash continues, even a doubled one.
 func splitEntry(group []string) (key, value string, ok bool) {
 	first := group[0]
 	eq := strings.Index(first, "=")
@@ -177,21 +182,13 @@ func splitEntry(group []string) (key, value string, ok bool) {
 		return "", "", false
 	}
 
-	parts := make([]string, 0, len(group))
-	parts = append(parts, strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(first[eq+1:]), "\\")))
+	value = strings.TrimSpace(first[eq+1:])
 	for _, more := range group[1:] {
-		parts = append(parts, strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(more), "\\")))
-	}
-
-	// Drop empty fragments so a continuation with a blank tail does not
-	// introduce a double space.
-	kept := parts[:0]
-	for _, p := range parts {
-		if p != "" {
-			kept = append(kept, p)
+		if !skipped(more) {
+			value = strings.TrimSuffix(value, `\`) + strings.TrimSpace(more)
 		}
 	}
-	return key, strings.Join(kept, " "), true
+	return key, strings.TrimSpace(strings.TrimSuffix(value, `\`)), true
 }
 
 // Render writes the file back out. For an unmodified file the result is
@@ -224,11 +221,12 @@ func (f *File) Entries() []Entry {
 }
 
 // Section returns every entry in the named section, in file order. Section
-// names are matched case-insensitively, as systemd does.
+// names are matched exactly: the generator ignores `[container]` in a
+// `.container` file (verified against Podman 5.8.4).
 func (f *File) Section(name string) []Entry {
 	var out []Entry
 	for _, e := range f.Entries() {
-		if strings.EqualFold(e.Section, name) {
+		if e.Section == name {
 			out = append(out, e)
 		}
 	}
@@ -237,11 +235,12 @@ func (f *File) Section(name string) []Entry {
 
 // Values returns the values of every occurrence of a key within a section, in
 // file order. Repeated keys are the norm in Quadlet, so this, not a lookup of
-// one value, is the primary accessor.
+// one value, is the primary accessor. Keys are matched exactly, as systemd
+// and Quadlet do.
 func (f *File) Values(section, key string) []string {
 	var out []string
 	for _, e := range f.Section(section) {
-		if strings.EqualFold(e.Key, key) {
+		if e.Key == key {
 			out = append(out, e.Value)
 		}
 	}
@@ -264,7 +263,7 @@ func (f *File) Lookup(section, key string) (string, bool) {
 // intent, whereas an absent one means the unit will never autostart.
 func (f *File) HasSection(name string) bool {
 	for _, l := range f.Lines {
-		if l.Kind == LineSection && strings.EqualFold(l.Section, name) {
+		if l.Kind == LineSection && l.Section == name {
 			return true
 		}
 	}

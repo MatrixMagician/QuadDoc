@@ -308,7 +308,7 @@ func checkQD020(c *Context) []Finding {
 				Severity:   Warning,
 				Confidence: Confirmed,
 				Unit:       u.Path,
-				Line:       u.KeyLine("After"),
+				Line:       u.EntryLine("Unit", "After", after),
 				Message: fmt.Sprintf("%s is ordered after %s, but systemd ordering waits for the container to start, not to become ready",
 					u.Name, dep.Name),
 				Remediation: remediation,
@@ -332,7 +332,7 @@ func checkQD021(c *Context) []Finding {
 			Severity:   Error,
 			Confidence: Confirmed,
 			Unit:       u.Path,
-			Line:       u.KeyLine("Restart"),
+			Line:       u.EntryLine("Service", "Restart", u.Restart),
 			Message: "Restart=unless-stopped is not a systemd restart policy; systemd ignores it, " +
 				"so this container silently has no restart policy at all",
 			Remediation: "systemd has no equivalent of compose's unless-stopped, and does not " +
