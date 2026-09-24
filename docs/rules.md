@@ -23,7 +23,7 @@ Every rule cites the documentation or observed behaviour it encodes.
 | [QD032](#qd032) | error |  | Unit name collides with an existing unit or Podman object |
 | [QD040](#qd040) | warning |  | AutoUpdate=registry needs a fully-qualified image reference |
 | [QD041](#qd041) | warning |  | Credential passed as an environment value in the unit file |
-| [QD042](#qd042) | warning |  | Key is not recognised by Quadlet and will be ignored |
+| [QD042](#qd042) | error |  | Key is not recognised by Quadlet, so the unit is not generated |
 | [QD043](#qd043) | error |  | Container unit has neither Image= nor Rootfs= |
 
 ## QD000
@@ -150,7 +150,7 @@ compose's `unless-stopped` is not a systemd restart policy. systemd does not rej
 
 Quadlet services are transient, so they cannot be enabled with systemctl. The generator applies the [Install] section at generation time instead. Without one the unit starts only when started by hand.
 
-*Source: podman-systemd.unit(5), "Enabling unit files": services created by Podman are transient, so "it is not possible to systemctl enable them in order for them to become automatically enabled on the next boot". Instead the generator "manually applies the [Install] section of the container definition unit files during generation, in the same way systemctl enable does when run later".*
+*Source: podman-systemd.unit(5), "Enabling unit files": services created by Podman are transient, so "it is not possible to systemctl enable them in order for them to become automatically enabled on the next boot". Instead the generator "manually applies the [Install] section of the container definition unit files during generation, in the same way systemctl enable does when run later". A unit with [Service] Type=oneshot is reported as a note: the same page allows it for .container and .kube units "when no containers are expected to run once podman exits".*
 
 ## QD023
 
@@ -171,7 +171,7 @@ Quadlet applies only Alias, WantedBy, RequiredBy, and UpheldBy from [Install]. A
 
 Podman's default network has DNS disabled, so containers on it cannot resolve each other by name at all. This is not a degraded form of compose's behaviour, it is the absence of it: a container that expects to reach a sibling by service name fails with an unresolvable host.
 
-*Source: Observed on Podman 5.8.4: `podman network inspect podman` reports "dns_enabled": false for the default network. podman-network-create(1) enables DNS for user-defined networks, which podman-systemd.unit(5) creates from a .network unit.*
+*Source: Observed on Podman 5.8.4: `podman network inspect podman` reports "dns_enabled": false for the default network. podman-network-create(1) enables DNS for user-defined networks, which podman-systemd.unit(5) creates from a .network unit. podman-run(1) --network: `bridge[:OPTIONS]` is the default network, and pasta, slirp4netns and private give the container a network stack of its own, so none of them resolves siblings.*
 
 ## QD031
 
@@ -203,7 +203,7 @@ Quadlet prefixes the objects it creates with `systemd-`, so a name collision is 
 
 Auto-update has to know which image to check, which it cannot do from a short name that depends on registry search order, nor from a digest that never changes. A floating tag such as latest is also worth flagging: it works, but combined with auto-update it means the running version is whatever the registry served most recently.
 
-*Source: podman-systemd.unit(5), AutoUpdate=: registry "Requires a fully-qualified image reference (e.g., quay.io/podman/stable:latest) to be used to create the container. This enforcement is necessary to know which image to actually check and pull." The Quadlet generator itself warns on short names (observed, Podman 5.8.4).*
+*Source: podman-systemd.unit(5), AutoUpdate=: registry "Requires a fully-qualified image reference (e.g., quay.io/podman/stable:latest) to be used to create the container. This enforcement is necessary to know which image to actually check and pull." The Quadlet generator itself warns on short names (observed, Podman 5.8.4). An untagged reference floats like latest: podman-pull(1), "If an image tag is not specified, podman pull defaults to the image with the latest tag".*
 
 ## QD041
 
@@ -217,13 +217,13 @@ A unit file is world-readable in the Quadlet search path and is usually committe
 
 ## QD042
 
-**Key is not recognised by Quadlet and will be ignored**
+**Key is not recognised by Quadlet, so the unit is not generated**
 
-- Default severity: `warning`
+- Default severity: `error`
 
-Quadlet reads the keys it knows and ignores the rest without complaint, so a typo'd key looks like configuration that simply does not work. This most often bites when a key is spelled as its podman flag (Volumes= for Volume=) or as the compose key it came from.
+The Quadlet generator rejects a unit that sets a key its section does not support: it logs "unsupported key" and creates no service for that unit, so `systemctl start` then reports the unit as not found. This most often bites when a key is spelled as its podman flag (Volumes= for Volume=) or as the compose key it came from.
 
-*Source: podman-systemd.unit(5) lists the keys each unit type accepts. The set is generated from the installed manual page by internal/rules/genkeys; see docs/adr/0002-minimum-podman-version.md for why per-version deltas are not attempted in v1.*
+*Source: podman-systemd.unit(5) lists the keys each unit type accepts. The set is generated from the installed manual page by internal/rules/genkeys; see docs/adr/0002-minimum-podman-version.md for why per-version deltas are not attempted in v1. The rejection is Podman's checkForUnknownKeys (pkg/systemd/quadlet/quadlet.go), which returns "unsupported key '%s' in group '%s'" for the whole unit in both 5.0.0 and 5.8.4, the ends of the supported range; observed with quadlet -dryrun on 5.8.4. The 5.8.4 source also accepts ServiceName= in every unit section and LogOpt= in [Kube], and still honours the deprecated RemapUsers=, RemapUid=, RemapGid=, RemapUidSize= and VolatileTmp=, none of which the manual page lists for those sections.*
 
 ## QD043
 

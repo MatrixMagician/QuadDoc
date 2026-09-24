@@ -19,7 +19,9 @@ func init() {
 			"fully-qualified image reference (e.g., quay.io/podman/stable:latest) to be " +
 			"used to create the container. This enforcement is necessary to know which " +
 			"image to actually check and pull.\" The Quadlet generator itself warns on " +
-			"short names (observed, Podman 5.8.4).",
+			"short names (observed, Podman 5.8.4). An untagged reference floats like " +
+			"latest: podman-pull(1), \"If an image tag is not specified, podman pull " +
+			"defaults to the image with the latest tag\".",
 		DefaultSeverity: Warning,
 		Check:           checkQD040,
 	})
@@ -111,11 +113,17 @@ func checkQD040(c *Context) []Finding {
 		autoUpdate := lower(u.AutoUpdate)
 		line := u.KeyLine("Image")
 
+		// An untagged reference means latest (podman-pull(1)).
+		tag, implied := ref.Tag, ""
+		if tag == "" && !ref.Digest {
+			tag, implied = "latest", " (implied, as the image is untagged)"
+		}
+
 		if autoUpdate == "registry" {
 			switch {
 			case ref.Registry == "":
 				findings = append(findings, Finding{
-					Severity:   Error,
+					Severity:   Warning,
 					Confidence: Confirmed,
 					Unit:       u.Path,
 					Line:       line,
@@ -136,14 +144,14 @@ func checkQD040(c *Context) []Finding {
 					Remediation: "A digest names one immutable image, so auto-update will never " +
 						"find a newer one. Either use a tag, or drop AutoUpdate=registry.",
 				})
-			case floatingTags[ref.Tag]:
+			case floatingTags[tag]:
 				findings = append(findings, Finding{
 					Severity:   Warning,
 					Confidence: Confirmed,
 					Unit:       u.Path,
 					Line:       line,
-					Message: fmt.Sprintf("AutoUpdate=registry with the floating tag %q means the running version is whatever the registry served last",
-						ref.Tag),
+					Message: fmt.Sprintf("AutoUpdate=registry with the floating tag %q%s means the running version is whatever the registry served last",
+						tag, implied),
 					Remediation: "This combination works, but nothing records which version is " +
 						"running. Pin a version tag if you need to know what you are " +
 						"deploying, or keep the floating tag deliberately.",

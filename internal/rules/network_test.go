@@ -1,12 +1,14 @@
 package rules
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/MatrixMagician/quaddoc/internal/hostctx"
+	"github.com/MatrixMagician/quaddoc/internal/podmantest"
 )
 
 func TestQD030(t *testing.T) {
@@ -58,6 +60,31 @@ func TestQD030(t *testing.T) {
 			wantFindings: 0,
 		},
 		{
+			// podman-run(1) --network: pasta, slirp4netns and private give the
+			// container a stack of its own, and bridge:OPTIONS is the default
+			// network with options, so none of them resolves siblings.
+			name: "user-mode stacks and the default bridge with options have no DNS",
+			units: map[string]string{
+				"app.network":      "[Network]\n",
+				"db.container":     "[Container]\nImage=postgres\nNetwork=app.network\n",
+				"api.container":    "[Container]\nImage=nginx\nNetwork=bridge:ip=10.88.0.10\n",
+				"web.container":    "[Container]\nImage=nginx\nNetwork=pasta\n",
+				"worker.container": "[Container]\nImage=nginx\nNetwork=slirp4netns:mtu=1500\n",
+				"job.container":    "[Container]\nImage=nginx\nNetwork=private\n",
+				"cron.container":   "[Container]\nImage=nginx\nNetwork=podman:alias=cron\n",
+			},
+			wantFindings: 5,
+		},
+		{
+			name: "a network unit with options is still a shared network",
+			units: map[string]string{
+				"app.network":   "[Network]\n",
+				"web.container": "[Container]\nImage=nginx\nNetwork=app.network:alias=www\n",
+				"db.container":  "[Container]\nImage=postgres\nNetwork=app.network\n",
+			},
+			wantFindings: 0,
+		},
+		{
 			name: "one container on a network, one not",
 			units: map[string]string{
 				"app.network":   "[Network]\n",
@@ -94,6 +121,31 @@ func TestQD030RemediationIsAWholeUnitFile(t *testing.T) {
 		if !strings.Contains(got[0].Remediation, want) {
 			t.Errorf("remediation is missing %q:\n%s", want, got[0].Remediation)
 		}
+	}
+}
+
+func TestQD030NamesAUserModeStack(t *testing.T) {
+	// Podman refuses a second network beside pasta ("cannot set multiple
+	// networks without bridge network mode", observed on 5.8.4), so the
+	// remediation must say to replace the line, not add one.
+	units := namedUnits(t, map[string]string{
+		"web.container": "[Container]\nImage=nginx\nNetwork=pasta\n",
+		"db.container":  "[Container]\nImage=postgres\n",
+	})
+
+	got := runRule(t, "QD030", hostctx.Unknown{}, units...)
+	if len(got) != 2 {
+		t.Fatalf("findings = %d, want 2: %+v", len(got), got)
+	}
+	web := got[1]
+	if want := "web uses Network=pasta, a network stack of its own with no DNS, so it cannot resolve the other 1 containers in this project by name"; web.Message != want {
+		t.Errorf("message = %q, want %q", web.Message, want)
+	}
+	if want := "replacing Network=pasta"; !strings.Contains(web.Remediation, want) {
+		t.Errorf("remediation does not say %q:\n%s", want, web.Remediation)
+	}
+	if strings.Contains(got[0].Remediation, "replacing") {
+		t.Errorf("db sets no Network=, so there is nothing to replace:\n%s", got[0].Remediation)
 	}
 }
 
@@ -163,6 +215,59 @@ func TestQD031(t *testing.T) {
 			}
 		})
 	}
+}
+
+// qd031Suggestions runs QD031 over each PublishPort= value and returns the
+// PublishPort= line each remediation suggests.
+func qd031Suggestions(t *testing.T, values []string) []string {
+	t.Helper()
+	var out []string
+	for _, v := range values {
+		u := unitFromText(t, "web.container", "[Container]\nImage=nginx\nPublishPort="+v+"\n")
+		got := runRule(t, "QD031", hostctx.Unknown{}, u)
+		if len(got) != 1 {
+			t.Fatalf("PublishPort=%s: findings = %d, want 1", v, len(got))
+		}
+		_, rest, _ := strings.Cut(got[0].Remediation, "    PublishPort=")
+		line, _, _ := strings.Cut(rest, "\n")
+		out = append(out, "PublishPort="+line)
+	}
+	return out
+}
+
+var qd031Cases = []struct{ value, want string }{
+	{"80:80", "PublishPort=8080:80"},
+	{"80-81:8080-8081", "PublishPort=8080-8081:8080-8081"},
+	{"127.0.0.1:80:80/udp", "PublishPort=127.0.0.1:8080:80/udp"},
+	{"[::1]:443:443", "PublishPort=[::1]:8443:443"},
+}
+
+func TestQD031SuggestionKeepsRangeAddressAndProtocol(t *testing.T) {
+	var values []string
+	for _, c := range qd031Cases {
+		values = append(values, c.value)
+	}
+	for i, got := range qd031Suggestions(t, values) {
+		if got != qd031Cases[i].want {
+			t.Errorf("PublishPort=%s: suggestion = %q, want %q", qd031Cases[i].value, got, qd031Cases[i].want)
+		}
+	}
+}
+
+func TestQD031SuggestionIsAcceptedByTheGenerator(t *testing.T) {
+	generator := podmantest.Generator(t)
+	dir := t.TempDir()
+	var values []string
+	for _, c := range qd031Cases {
+		values = append(values, c.value)
+	}
+	for i, line := range qd031Suggestions(t, values) {
+		unit := fmt.Sprintf("[Container]\nImage=docker.io/library/nginx:1.27\n%s\n", line)
+		if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("web%d.container", i)), []byte(unit), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	podmantest.AssertAccepts(t, generator, dir)
 }
 
 func TestQD031SilentWhenRootful(t *testing.T) {

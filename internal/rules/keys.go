@@ -16,18 +16,60 @@ import (
 func init() {
 	Register(&Rule{
 		ID:      "QD042",
-		Summary: "Key is not recognised by Quadlet and will be ignored",
-		Rationale: "Quadlet reads the keys it knows and ignores the rest without " +
-			"complaint, so a typo'd key looks like configuration that simply does not " +
-			"work. This most often bites when a key is spelled as its podman flag " +
-			"(Volumes= for Volume=) or as the compose key it came from.",
+		Summary: "Key is not recognised by Quadlet, so the unit is not generated",
+		Rationale: "The Quadlet generator rejects a unit that sets a key its section does " +
+			"not support: it logs \"unsupported key\" and creates no service for that " +
+			"unit, so `systemctl start` then reports the unit as not found. This most " +
+			"often bites when a key is spelled as its podman flag (Volumes= for " +
+			"Volume=) or as the compose key it came from.",
 		Citation: "podman-systemd.unit(5) lists the keys each unit type accepts. The set " +
 			"is generated from the installed manual page by internal/rules/genkeys; see " +
 			"docs/adr/0002-minimum-podman-version.md for why per-version deltas are not " +
-			"attempted in v1.",
-		DefaultSeverity: Warning,
+			"attempted in v1. The rejection is Podman's checkForUnknownKeys " +
+			"(pkg/systemd/quadlet/quadlet.go), which returns \"unsupported key '%s' in " +
+			"group '%s'\" for the whole unit in both 5.0.0 and 5.8.4, the ends of the " +
+			"supported range; observed with quadlet -dryrun on 5.8.4. The 5.8.4 source " +
+			"also accepts ServiceName= in every unit section and LogOpt= in [Kube], and " +
+			"still honours the deprecated RemapUsers=, RemapUid=, RemapGid=, " +
+			"RemapUidSize= and VolatileTmp=, none of which the manual page lists for " +
+			"those sections.",
+		DefaultSeverity: Error,
 		Check:           checkQD042,
 	})
+}
+
+// generatorOnlyKeys are keys the generator accepts although
+// podman-systemd.unit(5) does not list them for that section. This is the
+// whole of that gap, found by comparing knownKeys with each section's
+// supported-key table in Podman 5.8.4's quadlet.go, less the deprecated keys
+// below. TestQD042MatchesTheGenerator pins it against the real generator.
+var generatorOnlyKeys = map[string]map[string]bool{
+	"Container": {"ServiceName": true},
+	"Volume":    {"ServiceName": true},
+	"Network":   {"ServiceName": true},
+	"Kube":      {"ServiceName": true, "LogOpt": true},
+	"Build":     {"ServiceName": true},
+	"Image":     {"ServiceName": true},
+}
+
+// deprecatedKeys are keys the generator still honours in the given sections but
+// marks deprecated in its source (quadlet.go in both 5.0.0 and 5.8.4), mapped to
+// what replaces each. They are absent from podman-systemd.unit(5), so without
+// this table QD042 would call working configuration unknown.
+var deprecatedKeys = map[string]map[string]string{
+	"Container": {
+		"RemapUsers": "UserNS=", "RemapUid": "UIDMap= (or UserNS=keep-id:uid=)",
+		"RemapGid": "GIDMap= (or UserNS=keep-id:gid=)", "RemapUidSize": "UserNS=auto:size=",
+		"VolatileTmp": "Tmpfs=/tmp",
+	},
+	"Pod": {
+		"RemapUsers": "UserNS=", "RemapUid": "UIDMap= (or UserNS=keep-id:uid=)",
+		"RemapGid": "GIDMap= (or UserNS=keep-id:gid=)", "RemapUidSize": "UserNS=auto:size=",
+	},
+	"Kube": {
+		"RemapUsers": "UserNS=", "RemapUid": "UserNS=keep-id:uid= or UserNS=auto:uidmapping=",
+		"RemapGid": "UserNS=keep-id:gid= or UserNS=auto:gidmapping=", "RemapUidSize": "UserNS=auto:size=",
+	},
 }
 
 // commonMistakes maps a wrong key to the right one, so the finding can suggest
@@ -82,14 +124,31 @@ func checkQD042(c *Context) []Finding {
 		}
 
 		for _, e := range u.Entries {
-			if e.Section != section || accepted[e.Key] {
+			if e.Section != section || accepted[e.Key] || generatorOnlyKeys[section][e.Key] {
 				continue
 			}
 
-			message := fmt.Sprintf("%s= is not a Quadlet key for [%s] and will be ignored",
-				e.Key, section)
-			remediation := fmt.Sprintf("Quadlet reads only the keys it knows and ignores the rest without "+
-				"complaint, so this line has no effect. Check the spelling against "+
+			if replacement, ok := deprecatedKeys[section][e.Key]; ok {
+				findings = append(findings, Finding{
+					Severity:   Note,
+					Confidence: Confirmed,
+					Unit:       u.Path,
+					Line:       e.Line,
+					Message: fmt.Sprintf("%s= is deprecated; the generator still honours it, but it is no longer documented",
+						e.Key),
+					Remediation: fmt.Sprintf("Express the same setting with %s, the documented "+
+						"equivalent. The deprecated key works on the Podman this was checked "+
+						"against (%s), but may be removed from a later release.",
+						replacement, generatedFromPodman),
+				})
+				continue
+			}
+
+			base := u.Name + "." + string(u.Kind)
+			message := fmt.Sprintf("%s= is not a Quadlet key for [%s], so the generator rejects %s and creates no service for it",
+				e.Key, section, base)
+			remediation := fmt.Sprintf("The generator stops at the first key it does not know and "+
+				"generates nothing for this unit. Check the spelling against "+
 				"`man podman-systemd.unit`, or run `quaddoc rules QD042`.\n\n"+
 				"If the key is genuinely newer than the Podman this was checked "+
 				"against (%s), you can pass it through with PodmanArgs=.",
@@ -103,16 +162,16 @@ func checkQD042(c *Context) []Finding {
 				if strings.Contains(suggestion, " ") {
 					remediation = suggestion + ".\n\n" + remediation
 				} else {
-					message = fmt.Sprintf("%s= is not a Quadlet key for [%s]; did you mean %s=?",
-						e.Key, section, suggestion)
+					message = fmt.Sprintf("%s= is not a Quadlet key for [%s], so the generator rejects %s; did you mean %s=?",
+						e.Key, section, base, suggestion)
 					remediation = fmt.Sprintf("Rename the key:\n\n    %s=%s\n\n"+
-						"Quadlet ignores keys it does not know, so as written this line "+
-						"does nothing.", suggestion, e.Value)
+						"The generator rejects a unit with a key it does not know, so as "+
+						"written no service is created for it.", suggestion, e.Value)
 				}
 			}
 
 			findings = append(findings, Finding{
-				Severity:    Warning,
+				Severity:    Error,
 				Confidence:  Confirmed,
 				Unit:        u.Path,
 				Line:        e.Line,

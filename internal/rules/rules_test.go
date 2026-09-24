@@ -66,11 +66,30 @@ func TestQD022(t *testing.T) {
 			wantFindings: 1, wantSeverity: Error,
 		},
 		{
+			// podman-systemd.unit(5): "Type may be explicitly set to oneshot
+			// for .container and .kube files when no containers are expected
+			// to run once podman exits."
 			name: "a one-shot is a note, not an error",
 			unit: "job.container",
 			text: "[Container]\nImage=docker.io/library/alpine:3.20\n" +
-				"[Service]\nRestart=no\n",
+				"[Service]\nType=oneshot\nRemainAfterExit=yes\n",
 			wantFindings: 1, wantSeverity: Note,
+		},
+		{
+			// systemd.service(5): on-failure is "the recommended choice for
+			// long-running services".
+			name: "Restart=on-failure is a long-running service",
+			unit: "web.container",
+			text: "[Container]\nImage=docker.io/library/nginx:1.27\n" +
+				"[Service]\nRestart=on-failure\n",
+			wantFindings: 1, wantSeverity: Error,
+		},
+		{
+			name: "Restart=no is the systemd default, not a one-shot marker",
+			unit: "web.container",
+			text: "[Container]\nImage=docker.io/library/nginx:1.27\n" +
+				"[Service]\nRestart=no\n",
+			wantFindings: 1, wantSeverity: Error,
 		},
 		{
 			// Verified against Podman 5.8.4: the pod service gets
@@ -91,6 +110,35 @@ func TestQD022(t *testing.T) {
 			name:         "network units need no [Install]",
 			unit:         "app.network",
 			text:         "[Network]\n",
+			wantFindings: 0,
+		},
+		{
+			// podman-systemd.unit(5): Quadlet sets Type=notify for .kube, as
+			// for .container, so a kube unit is a long-running service.
+			name:         "a kube unit generates a service and needs an [Install]",
+			unit:         "app.kube",
+			text:         "[Kube]\nYaml=app.yaml\n",
+			wantFindings: 1, wantSeverity: Error,
+		},
+		{
+			name: "a one-shot kube unit is a note",
+			unit: "app.kube",
+			text: "[Kube]\nYaml=app.yaml\n" +
+				"[Service]\nType=oneshot\n",
+			wantFindings: 1, wantSeverity: Note,
+		},
+		{
+			// Quadlet sets Type=oneshot for these and pulls them in as
+			// dependencies of the units that reference them.
+			name:         "build units need no [Install]",
+			unit:         "img.build",
+			text:         "[Build]\nImageTag=localhost/img:1\n",
+			wantFindings: 0,
+		},
+		{
+			name:         "image units need no [Install]",
+			unit:         "base.image",
+			text:         "[Image]\nImage=docker.io/library/busybox:1\n",
 			wantFindings: 0,
 		},
 		{

@@ -212,6 +212,37 @@ func TestKindFromPath(t *testing.T) {
 	}
 }
 
+// podman-systemd.unit(5) documents eight unit types. A directory holding only
+// the four newer ones used to load as "no Quadlet units found".
+func TestLoadProjectLoadsEveryUnitKind(t *testing.T) {
+	dir := writeUnits(t, map[string]string{
+		"app.kube":      "[Kube]\nYaml=app.yaml\n",
+		"img.build":     "[Build]\nImageTag=localhost/img:1\n",
+		"base.image":    "[Image]\nImage=docker.io/library/busybox:1\n",
+		"blob.artifact": "[Artifact]\nArtifact=quay.io/example/blob:1\n",
+		"README.md":     "# not a unit\n",
+	})
+
+	p, err := LoadProject(dir)
+	if err != nil {
+		t.Fatalf("LoadProject: %v", err)
+	}
+
+	got := map[string]string{}
+	for _, u := range p.Units {
+		got[u.Name+"."+string(u.Kind)] = u.Kind.Section()
+	}
+	want := map[string]string{
+		"app.kube":      "Kube",
+		"img.build":     "Build",
+		"base.image":    "Image",
+		"blob.artifact": "Artifact",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("loaded %v, want %v", got, want)
+	}
+}
+
 func TestParseEnvKeepsQuotedValuesTogether(t *testing.T) {
 	got := parseEnv(`A=1 B="two words" C=3`, 7)
 	want := []EnvVar{
