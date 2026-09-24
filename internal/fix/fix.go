@@ -201,7 +201,7 @@ func fixFile(project *ir.Project, path string, findings []rules.Finding, network
 		case "QD022":
 			lines, changed = fixQD022(lines)
 		case "QD030":
-			lines, changed = fixQD030(lines, networkUnit)
+			lines, changed = fixQD030(lines, networkUnit, f.Fix["replace"])
 		}
 		if changed {
 			applied[f.RuleID] = true
@@ -332,12 +332,39 @@ func fixQD022(lines []quadlet.Line) ([]quadlet.Line, bool) {
 	return append(lines, header, wantedBy), true
 }
 
-// fixQD030 adds a Network= key to a container unit.
-func fixQD030(lines []quadlet.Line, networkUnit string) ([]quadlet.Line, bool) {
+// fixQD030 adds a Network= key to a container unit, or, when the rule found a
+// user-mode stack such as Network=pasta, replaces that line: Podman refuses any
+// other network beside one ("cannot set multiple networks without bridge
+// network mode"), so appending would yield a unit that fails to start.
+func fixQD030(lines []quadlet.Line, networkUnit, replace string) ([]quadlet.Line, bool) {
 	if networkUnit == "" {
 		return lines, false
 	}
 	want := networkUnit + ".network"
+
+	if replace != "" {
+		// The last matching line is the one in force: an empty Network=
+		// resets the ones before it.
+		at := -1
+		for i, l := range lines {
+			if l.Section != "Container" || l.Kind != quadlet.LineEntry || l.Key != "Network" {
+				continue
+			}
+			if l.Value == want {
+				return lines, false
+			}
+			if l.Value == replace {
+				at = i
+			}
+		}
+		if at < 0 {
+			return lines, false
+		}
+		l := entry("Container", "Network", want)
+		l.Number = lines[at].Number
+		lines[at] = l
+		return lines, true
+	}
 
 	// Insert after the last entry of the [Container] section, so the key lands
 	// where a human would have put it and never inside a continued entry.

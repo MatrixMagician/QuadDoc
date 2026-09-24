@@ -348,6 +348,16 @@ p='internal/fix/fix.go'; s=open(p).read()
 s=s.replace('\t\tif l.Section != \"Container\" {','\t\tif !strings.EqualFold(l.Section, \"Container\") {')
 open(p,'w').write(s)"
 
+run_mutation "fix appends beside Network=pasta" "internal/fix/fix.go" ./internal/fix "
+p='internal/fix/fix.go'; s=open(p).read()
+s=s.replace('\tif replace != \"\" {\n','\tif false {\n')
+open(p,'w').write(s)"
+
+run_mutation "QD030 no longer names the stack to replace" "$P/network.go" ./internal/fix "
+p='$P/network.go'; s=open(p).read()
+s=s.replace('\t\t\tfix = map[string]string{\"replace\": own}\n','')
+open(p,'w').write(s)"
+
 run_mutation "NamedVolumeUsers counts mounts not units" "internal/ir/ir.go" ./internal/ir "
 p='internal/ir/ir.go'; s=open(p).read()
 s=s.replace('\t\t\tif m.Type != MountNamed || seen[m.Source] {','\t\t\tif m.Type != MountNamed {')
