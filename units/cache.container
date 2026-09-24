@@ -9,12 +9,12 @@ Image=docker.io/library/redis:7
 Exec=redis-server --save 60 1
 User=999
 Group=999
-# 
+#
 # Named volume "cachedata" refers to the cachedata.volume unit, which Podman
-# materialises as a volume called `systemd-cachedata`. The .volume suffix is
-# what creates the dependency between the two units.
+# materialises as a volume called `cachedata`. The .volume suffix is what
+# creates the dependency between the two units.
 Volume=cachedata.volume:/data
-Network=webstack-net.network
+Network=webstack-backend.network
 
 [Service]
 Restart=always
