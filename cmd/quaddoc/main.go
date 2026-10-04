@@ -154,7 +154,7 @@ func takesValue(fs *flag.FlagSet, name string) bool {
 		return false
 	}
 	bf, ok := f.Value.(interface{ IsBoolFlag() bool })
-	return !(ok && bf.IsBoolFlag())
+	return !ok || !bf.IsBoolFlag()
 }
 
 func runConvert(args []string) int {

@@ -113,7 +113,7 @@ func (l *Live) readMounts() {
 	if err != nil {
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
@@ -195,7 +195,7 @@ func (l *Live) readSubIDs(file string) []IDRange {
 	if err != nil {
 		return nil
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	// When replaying a captured context the current user is not the captured
 	// one, so a capture records only the relevant lines and we take them all.
