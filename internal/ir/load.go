@@ -62,7 +62,7 @@ func LoadUnit(path string) (*Unit, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opening %s: %w", path, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	parsed, err := quadlet.Parse(path, f)
 	if err != nil {
